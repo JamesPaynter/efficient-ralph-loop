@@ -44,6 +44,7 @@ import {
 } from "./state.js";
 import { ensureDir, defaultRunId, isoNow } from "./utils.js";
 import { prepareTaskWorkspace } from "./workspaces.js";
+import { runDoctorValidator } from "../validators/doctor-validator.js";
 import { runTestValidator } from "../validators/test-validator.js";
 
 export type RunOptions = {
@@ -113,10 +114,17 @@ export async function runProject(
   const testValidatorConfig = config.test_validator;
   const testValidatorEnabled =
     testValidatorConfig !== undefined && testValidatorConfig.enabled !== false;
+  const doctorValidatorConfig = config.doctor_validator;
+  const doctorValidatorEnabled =
+    doctorValidatorConfig !== undefined && doctorValidatorConfig.enabled !== false;
   let testValidatorLog: JsonlLogger | null = null;
-  const closeValidatorLog = (): void => {
+  let doctorValidatorLog: JsonlLogger | null = null;
+  const closeValidatorLogs = (): void => {
     if (testValidatorLog) {
       testValidatorLog.close();
+    }
+    if (doctorValidatorLog) {
+      doctorValidatorLog.close();
     }
   };
 
@@ -142,7 +150,7 @@ export async function runProject(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logOrchestratorEvent(orchLog, "run.tasks_invalid", { message });
-    closeValidatorLog();
+    closeValidatorLogs();
     orchLog.close();
     throw err;
   }
@@ -153,7 +161,7 @@ export async function runProject(
 
   if (tasks.length === 0) {
     logOrchestratorEvent(orchLog, "run.no_tasks");
-    closeValidatorLog();
+    closeValidatorLogs();
     orchLog.close();
     return {
       runId,
@@ -172,6 +180,12 @@ export async function runProject(
     testValidatorLog = new JsonlLogger(validatorLogPath(projectName, runId, "test-validator"), {
       runId,
     });
+  }
+  if (doctorValidatorEnabled) {
+    doctorValidatorLog = new JsonlLogger(
+      validatorLogPath(projectName, runId, "doctor-validator"),
+      { runId },
+    );
   }
 
   logOrchestratorEvent(orchLog, "run.tasks_loaded", {
@@ -208,7 +222,7 @@ export async function runProject(
     if (state.status !== "running") {
       logRunResume(orchLog, { status: state.status, reason: runResumeReason });
       logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_not_running" });
-      closeValidatorLog();
+      closeValidatorLogs();
       orchLog.close();
       return { runId, state, plan: plannedBatches };
     }
@@ -266,6 +280,10 @@ export async function runProject(
       .filter(([, s]) => s.status === "failed")
       .map(([id]) => id),
   );
+  const doctorValidatorRunEvery = doctorValidatorConfig?.run_every_n_tasks;
+  let doctorValidatorLastCount = completed.size + failed.size;
+  let lastIntegrationDoctorOutput: string | undefined;
+  let lastIntegrationDoctorExitCode: number | undefined;
 
   let batchId = Math.max(0, ...state.batches.map((b) => b.batch_id));
   while (true) {
@@ -572,13 +590,16 @@ export async function runProject(
           reject: false,
           timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
         });
-        const doctorOk = doctorRes.exitCode === 0;
+        lastIntegrationDoctorOutput = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
+        const doctorExitCode = doctorRes.exitCode ?? -1;
+        lastIntegrationDoctorExitCode = doctorExitCode;
+        const doctorOk = doctorExitCode === 0;
         logOrchestratorEvent(
           orchLog,
           doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
           {
             batch_id: batchId,
-            exit_code: doctorRes.exitCode ?? -1,
+            exit_code: doctorExitCode,
           },
         );
         integrationDoctorPassed = doctorOk;
@@ -600,6 +621,49 @@ export async function runProject(
     });
     await stateStore.save(state);
 
+    const finishedCount = completed.size + failed.size;
+    const shouldRunDoctorValidatorCadence =
+      doctorValidatorEnabled &&
+      doctorValidatorConfig &&
+      doctorValidatorRunEvery !== undefined &&
+      finishedCount - doctorValidatorLastCount >= doctorValidatorRunEvery;
+    const shouldRunDoctorValidatorSuspicious =
+      doctorValidatorEnabled && doctorValidatorConfig && integrationDoctorPassed === false;
+
+    if (
+      doctorValidatorEnabled &&
+      doctorValidatorConfig &&
+      (shouldRunDoctorValidatorCadence || shouldRunDoctorValidatorSuspicious)
+    ) {
+      const trigger = shouldRunDoctorValidatorSuspicious ? "integration_doctor_failed" : "cadence";
+      const triggerNotes = shouldRunDoctorValidatorSuspicious
+        ? `Integration doctor failed for batch ${batchId} (exit code ${lastIntegrationDoctorExitCode ?? -1})`
+        : `Cadence reached after ${finishedCount} tasks (interval ${doctorValidatorRunEvery})`;
+
+      await runDoctorValidator({
+        projectName,
+        repoPath,
+        runId,
+        mainBranch: config.main_branch,
+        doctorCommand: config.doctor,
+        trigger,
+        triggerNotes,
+        integrationDoctorOutput:
+          trigger === "integration_doctor_failed" ? lastIntegrationDoctorOutput : undefined,
+        config: doctorValidatorConfig,
+        orchestratorLog: orchLog,
+        logger: doctorValidatorLog ?? undefined,
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logOrchestratorEvent(orchLog, "validator.error", {
+          validator: "doctor",
+          message,
+        });
+      });
+
+      doctorValidatorLastCount = finishedCount;
+    }
+
     logOrchestratorEvent(orchLog, "batch.complete", { batch_id: batchId });
 
     if (stopReason) {
@@ -614,7 +678,7 @@ export async function runProject(
   await stateStore.save(state);
 
   logOrchestratorEvent(orchLog, "run.complete", { status: state.status });
-  closeValidatorLog();
+  closeValidatorLogs();
   orchLog.close();
 
   // Optional cleanup of successful workspaces can be added later.

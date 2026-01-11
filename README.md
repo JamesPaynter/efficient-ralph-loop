@@ -122,7 +122,7 @@ task-orchestrator run --project my-project
 
 - Dedicated per-task clones live at `~/.task-orchestrator/workspaces/<project>/run-<run-id>/task-<task-id>`; tasks never share a working tree, and manifests are copied into each workspace before execution.
 - Resume is **Level 1**: resuming resets `running` tasks to `pending` and reruns them; no container or Codex thread reattachment.
-- Validator agents (`test_validator`, `doctor_validator`) are not wired; `locks.reads/writes` guide scheduling only, and workers have full filesystem access inside their containers.
+- Validator agents run in advisory mode only (tests per task; doctor periodically); `locks.reads/writes` guide scheduling only, and workers have full filesystem access inside their containers.
 - See `docs/mvp-scope.md` for details and future upgrades.
 
 ## Notes / assumptions
@@ -134,7 +134,7 @@ task-orchestrator run --project my-project
 ## Known gaps vs your full spec (by design for MVP)
 
 - **Resume Level 1 only** — resuming resets `running` tasks to `pending` and reruns them; no container/thread reattachment.
-- **Test validator** and **doctor validator** are not wired yet.
+- **Validator agents are advisory only** — validators do not block merges; doctor validator triggers on cadence/suspicion.
 - **Access enforcement** beyond Docker is not present; runtime access is not sandboxed against manifest declarations.
 - **Branch push restrictions** are not implemented (this design merges locally).
 - No Web UI.

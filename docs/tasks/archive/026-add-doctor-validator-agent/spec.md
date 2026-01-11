@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Assess doctor command effectiveness periodically and emit recommendations (non-blocking).
@@ -27,13 +27,14 @@ Assess doctor command effectiveness periodically and emit recommendations (non-b
 - Rollback: Disable via config.
 
 ## Implementation Checklist
-- [ ] Implement configurable trigger (every N tasks).
-- [ ] Collect doctor outputs and recent diffs as context.
-- [ ] Call LLM in deterministic mode; emit events and recommendations.
+- [x] Implement configurable trigger (every N tasks).
+- [x] Collect doctor outputs and recent diffs as context.
+- [x] Call LLM in deterministic mode; emit events and recommendations.
 
 ## Verification
-- `Manual: run with fixtures and confirm report generation.`
 - `npm test`
+- `npm run build`
+- `Manual: run with fixtures and confirm report generation (not run; covered by automated fixtures/tests).`
 
 ## Dependencies
 ### Blocks

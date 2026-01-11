@@ -40,6 +40,10 @@ const ValidatorSchema = z
   })
   .strict();
 
+const DoctorValidatorSchema = ValidatorSchema.extend({
+  run_every_n_tasks: z.number().int().positive().default(10),
+}).strict();
+
 const DockerSchema = z
   .object({
     image: z.string().min(1).default("task-orchestrator-worker:latest"),
@@ -75,7 +79,7 @@ export const ProjectConfigSchema = z
     worker: WorkerSchema,
 
     test_validator: ValidatorSchema.optional(),
-    doctor_validator: ValidatorSchema.optional(),
+    doctor_validator: DoctorValidatorSchema.optional(),
   })
   .strict();
 
@@ -83,6 +87,7 @@ export type LlmProvider = z.infer<typeof LlmProviderSchema>;
 export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
+export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
 export type ResourceConfig = z.infer<typeof ResourceSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

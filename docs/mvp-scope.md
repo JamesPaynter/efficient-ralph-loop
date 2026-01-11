@@ -16,8 +16,8 @@ This repository is intentionally an MVP: it runs the orchestrator end-to-end, bu
 
 ## Validators and access declarations
 
-- Config fields for `test_validator` and `doctor_validator` exist but are not wired into the run loop; batches do not block on LLM validators.
-- The integration doctor shell command still runs after merges; validator agents are a future enhancement to gate or annotate results.
+- LLM validators run in advisory mode: the test validator runs per-task and the doctor validator runs periodically; neither blocks merges today.
+- The integration doctor shell command still runs after merges; doctor validator output is informational.
 - `locks.reads` / `locks.writes` inform scheduling only. Workers run with full filesystem access; access mismatch logging is informational when present and not enforced.
 
 ## Non-goals in this release
