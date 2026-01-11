@@ -14,14 +14,9 @@ import {
 } from "../docker/docker.js";
 import { buildWorkerImage } from "../docker/image.js";
 import { attachLineStream } from "../docker/streams.js";
-import {
-  ensureCleanWorkingTree,
-  checkout,
-  mergeNoFf,
-  addRemote,
-  fetchRemote,
-  removeRemote,
-} from "../git/git.js";
+import { ensureCleanWorkingTree, checkout } from "../git/git.js";
+import { mergeTaskBranches } from "../git/merge.js";
+import { buildTaskBranchName } from "../git/branches.js";
 
 import type { ProjectConfig } from "./config.js";
 import { JsonlLogger, type JsonObject } from "./logger.js";
@@ -232,7 +227,11 @@ export async function runProject(
       batch.map(async (task) => {
         const taskId = task.manifest.id;
         const taskSlug = task.slug;
-        const branchName = `${config.task_branch_prefix}${taskId}-${taskSlug}`;
+        const branchName = buildTaskBranchName(
+          config.task_branch_prefix,
+          taskId,
+          task.manifest.name,
+        );
 
         const workspace = taskWorkspaceDir(projectName, runId, taskId);
         const tLogsDir = taskLogsDir(projectName, runId, taskId, taskSlug);
@@ -412,6 +411,10 @@ export async function runProject(
 
     await stateStore.save(state);
 
+    let batchMergeCommit: string | undefined;
+    let integrationDoctorPassed: boolean | undefined;
+    let stopReason: "merge_conflict" | "integration_doctor_failed" | undefined;
+
     // Merge successful tasks sequentially into integration branch.
     const toMerge = results.filter((r) => r.success);
     if (toMerge.length > 0) {
@@ -419,56 +422,72 @@ export async function runProject(
         type: "batch.merging",
         payload: { batch_id: batchId, tasks: toMerge.map((r) => r.taskId) },
       });
-      await checkout(repoPath, config.main_branch);
 
-      for (const r of toMerge) {
-        const remoteName = `task-${r.taskId}`;
-        try {
-          await addRemote(repoPath, remoteName, r.workspace);
-          await fetchRemote(repoPath, remoteName, r.branchName);
-          await mergeNoFf(repoPath, "FETCH_HEAD", `Merge ${r.branchName}`);
-        } finally {
-          await removeRemote(repoPath, remoteName).catch(() => undefined);
-        }
-      }
-
-      // Integration doctor
-      orchLog.log({
-        type: "doctor.integration.start",
-        payload: { batch_id: batchId, command: config.doctor },
-      });
-      const doctorRes = await execaCommand(config.doctor, {
-        cwd: repoPath,
-        shell: true,
-        reject: false,
-        timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
-      });
-      const doctorOk = doctorRes.exitCode === 0;
-      orchLog.log({
-        type: doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
-        payload: { batch_id: batchId, exit_code: doctorRes.exitCode ?? -1 },
+      const mergeResult = await mergeTaskBranches({
+        repoPath,
+        mainBranch: config.main_branch,
+        branches: toMerge.map((r) => ({
+          taskId: r.taskId,
+          branchName: r.branchName,
+          workspacePath: r.workspace,
+        })),
       });
 
-      const b = state.batches.find((b) => b.batch_id === batchId);
-      if (b) {
-        b.integration_doctor_passed = doctorOk;
-      }
-
-      if (!doctorOk) {
-        // Mark run failed but still record what happened.
+      if (mergeResult.status === "conflict") {
+        batchMergeCommit = mergeResult.mergeCommit;
+        orchLog.log({
+          type: "batch.merge_conflict",
+          payload: {
+            batch_id: batchId,
+            task_id: mergeResult.conflict.taskId,
+            branch: mergeResult.conflict.branchName,
+            message: mergeResult.message,
+          },
+        });
         state.status = "failed";
+        stopReason = "merge_conflict";
+      } else {
+        batchMergeCommit = mergeResult.mergeCommit;
+
+        // Integration doctor
+        orchLog.log({
+          type: "doctor.integration.start",
+          payload: { batch_id: batchId, command: config.doctor },
+        });
+        const doctorRes = await execaCommand(config.doctor, {
+          cwd: repoPath,
+          shell: true,
+          reject: false,
+          timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
+        });
+        const doctorOk = doctorRes.exitCode === 0;
+        orchLog.log({
+          type: doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
+          payload: { batch_id: batchId, exit_code: doctorRes.exitCode ?? -1 },
+        });
+        integrationDoctorPassed = doctorOk;
+
+        if (!doctorOk) {
+          // Mark run failed but still record what happened.
+          state.status = "failed";
+          stopReason = "integration_doctor_failed";
+        }
       }
     }
 
     // Mark batch complete
-    const batchStatus: "complete" | "failed" = failed.size > 0 ? "failed" : "complete";
-    completeBatch(state, batchId, batchStatus);
+    const batchStatus: "complete" | "failed" =
+      failed.size > 0 || stopReason ? "failed" : "complete";
+    completeBatch(state, batchId, batchStatus, {
+      mergeCommit: batchMergeCommit,
+      integrationDoctorPassed,
+    });
     await stateStore.save(state);
 
     orchLog.log({ type: "batch.complete", payload: { batch_id: batchId } });
 
-    if (state.status === "failed") {
-      orchLog.log({ type: "run.stop", payload: { reason: "integration_doctor_failed" } });
+    if (stopReason) {
+      orchLog.log({ type: "run.stop", payload: { reason: stopReason } });
       break;
     }
   }

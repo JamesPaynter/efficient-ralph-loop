@@ -104,3 +104,29 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
     return false;
   }
 }
+
+export async function abortMerge(cwd: string): Promise<void> {
+  await git(cwd, ["merge", "--abort"]);
+}
+
+export function isMergeConflictError(err: unknown): boolean {
+  if (!(err instanceof GitError)) return false;
+
+  const { stdout, stderr } = extractGitErrorOutput(err);
+  const output = `${stdout}\n${stderr}`.toLowerCase();
+  return output.includes("automatic merge failed") || output.includes("merge conflict");
+}
+
+function extractGitErrorOutput(err: GitError): { stdout: string; stderr: string } {
+  const cause = err.cause;
+  if (cause && typeof cause === "object") {
+    const causeObj = cause as Record<string, unknown>;
+    const stdoutRaw = causeObj.stdout;
+    const stderrRaw = causeObj.stderr;
+    return {
+      stdout: typeof stdoutRaw === "string" ? stdoutRaw : stdoutRaw ? String(stdoutRaw) : "",
+      stderr: typeof stderrRaw === "string" ? stderrRaw : stderrRaw ? String(stderrRaw) : "",
+    };
+  }
+  return { stdout: "", stderr: "" };
+}

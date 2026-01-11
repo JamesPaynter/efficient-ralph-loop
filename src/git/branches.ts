@@ -4,7 +4,13 @@ import { execa } from "execa";
 import fse from "fs-extra";
 
 import { GitError } from "../core/errors.js";
-import { ensureDir } from "../core/utils.js";
+import { ensureDir, slugify } from "../core/utils.js";
+
+export function buildTaskBranchName(prefix: string, taskId: string, taskName: string): string {
+  const slug = slugify(taskName);
+  const safeSlug = slug.length > 0 ? slug : "task";
+  return `${prefix}${taskId}-${safeSlug}`;
+}
 
 export async function cloneRepo(opts: {
   sourceRepo: string;

@@ -10,7 +10,7 @@
 - [x] [008 - Implement JSONL logger](docs/tasks/archive/008-implement-jsonl-logger/spec.md) (Effort <S>, Tier <mini>)
 - [x] [009 - Implement state store](docs/tasks/archive/009-implement-state-store/spec.md) (Effort <M>, Tier <mini>)
 - [x] [010 - Implement workspace manager](docs/tasks/archive/010-implement-workspace-manager/spec.md) (Effort <M>, Tier <mini>)
-- [ ] [011 - Implement git branch and merge](docs/tasks/active/011-implement-git-branch-and-merge/spec.md) (Effort <M>, Tier <mini>)
+- [x] [011 - Implement git branch and merge](docs/tasks/archive/011-implement-git-branch-and-merge/spec.md) (Effort <M>, Tier <mini>)
 - [ ] [012 - Implement Docker manager](docs/tasks/active/012-implement-docker-manager/spec.md) (Effort <L>, Tier <mini>)
 - [ ] [013 - Implement bootstrap runner](docs/tasks/active/013-implement-bootstrap-runner/spec.md) (Effort <S>, Tier <mini>)
 - [ ] [014 - Implement worker loop](docs/tasks/active/014-implement-worker-loop/spec.md) (Effort <L>, Tier <mini>)
