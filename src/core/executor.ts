@@ -29,6 +29,7 @@ import {
   taskLogsDir,
   taskWorkspaceDir,
   workerCodexHomeDir,
+  validatorLogPath,
 } from "./paths.js";
 import { buildGreedyBatch, topologicalReady, type BatchPlan } from "./scheduler.js";
 import { StateStore, findLatestRunId } from "./state-store.js";
@@ -43,6 +44,7 @@ import {
 } from "./state.js";
 import { ensureDir, defaultRunId, isoNow } from "./utils.js";
 import { prepareTaskWorkspace } from "./workspaces.js";
+import { runTestValidator } from "../validators/test-validator.js";
 
 export type RunOptions = {
   runId?: string;
@@ -61,6 +63,24 @@ export type BatchPlanEntry = {
 };
 
 export type RunResult = { runId: string; state: RunState; plan: BatchPlanEntry[] };
+
+type TaskRunResult =
+  | {
+      success: true;
+      taskId: string;
+      taskSlug: string;
+      branchName: string;
+      workspace: string;
+      logsDir: string;
+    }
+  | {
+      success: false;
+      taskId: string;
+      taskSlug: string;
+      branchName: string;
+      workspace: string;
+      logsDir: string;
+    };
 
 export async function runProject(
   projectName: string,
@@ -90,6 +110,15 @@ export async function runProject(
   await ensureDir(orchestratorHome());
   const stateStore = new StateStore(projectName, runId);
   const orchLog = new JsonlLogger(orchestratorLogPath(projectName, runId), { runId });
+  const testValidatorConfig = config.test_validator;
+  const testValidatorEnabled =
+    testValidatorConfig !== undefined && testValidatorConfig.enabled !== false;
+  let testValidatorLog: JsonlLogger | null = null;
+  const closeValidatorLog = (): void => {
+    if (testValidatorLog) {
+      testValidatorLog.close();
+    }
+  };
 
   logOrchestratorEvent(orchLog, "run.start", {
     project: projectName,
@@ -113,6 +142,7 @@ export async function runProject(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logOrchestratorEvent(orchLog, "run.tasks_invalid", { message });
+    closeValidatorLog();
     orchLog.close();
     throw err;
   }
@@ -123,6 +153,7 @@ export async function runProject(
 
   if (tasks.length === 0) {
     logOrchestratorEvent(orchLog, "run.no_tasks");
+    closeValidatorLog();
     orchLog.close();
     return {
       runId,
@@ -135,6 +166,12 @@ export async function runProject(
       }),
       plan: plannedBatches,
     };
+  }
+
+  if (testValidatorEnabled) {
+    testValidatorLog = new JsonlLogger(validatorLogPath(projectName, runId, "test-validator"), {
+      runId,
+    });
   }
 
   logOrchestratorEvent(orchLog, "run.tasks_loaded", {
@@ -171,6 +208,7 @@ export async function runProject(
     if (state.status !== "running") {
       logRunResume(orchLog, { status: state.status, reason: runResumeReason });
       logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_not_running" });
+      closeValidatorLog();
       orchLog.close();
       return { runId, state, plan: plannedBatches };
     }
@@ -274,7 +312,7 @@ export async function runProject(
     }
 
     // Launch tasks in parallel.
-    const results = await Promise.all(
+    const results: TaskRunResult[] = await Promise.all(
       batch.tasks.map(async (task) => {
         const taskId = task.manifest.id;
         const taskSlug = task.slug;
@@ -417,10 +455,24 @@ export async function runProject(
         }
 
         if (waited.exitCode === 0) {
-          return { taskId, taskSlug, branchName, workspace, success: true as const };
+          return {
+            taskId,
+            taskSlug,
+            branchName,
+            workspace,
+            logsDir: tLogsDir,
+            success: true as const,
+          };
         }
 
-        return { taskId, taskSlug, branchName, workspace, success: false as const };
+        return {
+          taskId,
+          taskSlug,
+          branchName,
+          workspace,
+          logsDir: tLogsDir,
+          success: false as const,
+        };
       }),
     );
 
@@ -444,6 +496,35 @@ export async function runProject(
     }
 
     await stateStore.save(state);
+
+    if (testValidatorEnabled && testValidatorConfig) {
+      const successfulTasks = results.filter((r) => r.success);
+      for (const r of successfulTasks) {
+        const taskSpec = tasks.find((t) => t.manifest.id === r.taskId);
+        if (!taskSpec) continue;
+
+        await runTestValidator({
+          projectName,
+          repoPath,
+          runId,
+          task: taskSpec,
+          taskSlug: r.taskSlug,
+          workspacePath: r.workspace,
+          taskLogsDir: r.logsDir,
+          mainBranch: config.main_branch,
+          config: testValidatorConfig,
+          orchestratorLog: orchLog,
+          logger: testValidatorLog ?? undefined,
+        }).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logOrchestratorEvent(orchLog, "validator.error", {
+            validator: "test",
+            taskId: r.taskId,
+            message,
+          });
+        });
+      }
+    }
 
     let batchMergeCommit: string | undefined;
     let integrationDoctorPassed: boolean | undefined;
@@ -533,6 +614,7 @@ export async function runProject(
   await stateStore.save(state);
 
   logOrchestratorEvent(orchLog, "run.complete", { status: state.status });
+  closeValidatorLog();
   orchLog.close();
 
   // Optional cleanup of successful workspaces can be added later.

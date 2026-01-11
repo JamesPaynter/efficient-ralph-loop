@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Implement optional test-quality validation that emits warnings/reports without blocking merges (future-friendly).
@@ -27,10 +27,10 @@ Implement optional test-quality validation that emits warnings/reports without b
 - Rollback: Disable via config; skip invocation entirely.
 
 ## Implementation Checklist
-- [ ] Implement validator invocation gated by config.enabled.
-- [ ] Collect changed test files and relevant code context (best-effort heuristics).
-- [ ] Call LLM with temperature=0 and parse JSON schema output.
-- [ ] Write validator JSONL events and a per-task report file.
+- [x] Implement validator invocation gated by config.enabled.
+- [x] Collect changed test files and relevant code context (best-effort heuristics).
+- [x] Call LLM with temperature=0 and parse JSON schema output.
+- [x] Write validator JSONL events and a per-task report file.
 
 ## Verification
 - `Manual: run validator in mock mode (fixture inputs) and confirm JSON schema parsing.`

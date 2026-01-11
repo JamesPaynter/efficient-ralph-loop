@@ -92,6 +92,29 @@ export function plannerLogPath(projectName: string, runId: string): string {
   return path.join(runLogsDir(projectName, runId), "planner.jsonl");
 }
 
+export function validatorsLogsDir(projectName: string, runId: string): string {
+  return path.join(runLogsDir(projectName, runId), "validators");
+}
+
+export function validatorLogPath(
+  projectName: string,
+  runId: string,
+  validatorName: string,
+): string {
+  return path.join(validatorsLogsDir(projectName, runId), `${validatorName}.jsonl`);
+}
+
+export function validatorReportPath(
+  projectName: string,
+  runId: string,
+  validatorName: string,
+  taskId: string,
+  taskSlug: string,
+): string {
+  const safeSlug = taskSlug.length > 0 ? taskSlug : "task";
+  return path.join(validatorsLogsDir(projectName, runId), validatorName, `${taskId}-${safeSlug}.json`);
+}
+
 export function runWorkspaceDir(projectName: string, runId: string): string {
   return path.join(projectWorkspacesDir(projectName), `run-${runId}`);
 }
