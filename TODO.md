@@ -16,7 +16,7 @@
 - [x] [014 - Implement worker loop](docs/tasks/archive/014-implement-worker-loop/spec.md) (Effort <L>, Tier <mini>)
 - [x] [015 - Wire run command](docs/tasks/active/015-wire-run-command/spec.md) (Effort <L>, Tier <mini>)
 - [x] [016 - Implement resume command](docs/tasks/archive/016-implement-resume-command/spec.md) (Effort <M>, Tier <mini>)
-- [ ] [017 - Implement status command](docs/tasks/active/017-implement-status-command/spec.md) (Effort <S>, Tier <mini>)
+- [x] [017 - Implement status command](docs/tasks/archive/017-implement-status-command/spec.md) (Effort <S>, Tier <mini>)
 - [ ] [018 - Implement logs command](docs/tasks/active/018-implement-logs-command/spec.md) (Effort <M>, Tier <mini>)
 - [ ] [019 - Implement clean command](docs/tasks/active/019-implement-clean-command/spec.md) (Effort <M>, Tier <mini>)
 - [ ] [020 - Add worker image templates](docs/tasks/active/020-add-worker-image-templates/spec.md) (Effort <S>, Tier <mini>)

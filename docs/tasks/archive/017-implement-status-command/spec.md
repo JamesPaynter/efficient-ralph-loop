@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Display a concise summary of current/last run: batches, tasks, and timestamps.
@@ -25,9 +25,9 @@ Display a concise summary of current/last run: batches, tasks, and timestamps.
 - Rollback: Keep as minimal JSON dump if formatting is problematic.
 
 ## Implementation Checklist
-- [ ] Load latest run (or run-id) and print: status, started, updated, batch/task counts.
-- [ ] Include task table: id, status, attempts (if tracked), branch name (if tracked).
-- [ ] Return non-zero if no runs exist (optional) but print actionable guidance.
+- [x] Load latest run (or run-id) and print: status, started, updated, batch/task counts.
+- [x] Include task table: id, status, attempts (if tracked), branch name (if tracked).
+- [x] Return non-zero if no runs exist (optional) but print actionable guidance.
 
 ## Verification
 - `Manual: run status when no state exists and confirm helpful message.`

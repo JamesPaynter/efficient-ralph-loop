@@ -1,58 +1,106 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import type { ProjectConfig } from "../core/config.js";
-import { runStateDir, runStatePath } from "../core/paths.js";
-import { loadRunState } from "../core/state-store.js";
+import {
+  loadRunStateForProject,
+  summarizeRunState,
+  type RunStatusSummary,
+  type TaskStatusRow,
+} from "../core/state-store.js";
 
 export async function statusCommand(
   projectName: string,
   _config: ProjectConfig,
   opts: { runId?: string },
 ): Promise<void> {
-  const runId = opts.runId ?? findLatestRunId(projectName);
-  if (!runId) {
-    console.log(`No runs found for project ${projectName}.`);
+  const resolved = await loadRunStateForProject(projectName, opts.runId);
+  if (!resolved) {
+    printRunNotFound(projectName, opts.runId);
     return;
   }
 
-  const statePath = runStatePath(projectName, runId);
-  const state = await loadRunState(statePath);
+  const summary = summarizeRunState(resolved.state);
+  printRunSummary(summary);
+  printTaskTable(summary.tasks);
+}
 
-  console.log(`Run: ${state.run_id}`);
-  console.log(`Status: ${state.status}`);
-  console.log(`Started: ${state.started_at}`);
-  console.log(`Updated: ${state.updated_at}`);
+function printRunNotFound(projectName: string, requestedRunId?: string): void {
+  const notFound = requestedRunId
+    ? `Run ${requestedRunId} not found for project ${projectName}.`
+    : `No runs found for project ${projectName}.`;
+
+  console.log(notFound);
+  console.log(`Start a run with: task-orchestrator run --project ${projectName}`);
+  process.exitCode = 1;
+}
+
+function printRunSummary(summary: RunStatusSummary): void {
+  console.log(`Run: ${summary.runId}`);
+  console.log(`Status: ${summary.status}`);
+  console.log(`Started: ${summary.startedAt}`);
+  console.log(`Updated: ${summary.updatedAt}`);
   console.log("");
+  console.log(formatBatchCounts(summary));
+  console.log(formatTaskCounts(summary));
+  console.log("");
+}
 
-  if (state.batches.length > 0) {
-    console.log("Batches:");
-    for (const b of state.batches) {
-      console.log(`  [${b.batch_id}] ${b.status}  (${b.tasks.length} tasks)`);
-    }
-    console.log("");
+function formatBatchCounts(summary: RunStatusSummary): string {
+  const counts = summary.batchCounts;
+  const parts = [
+    `total=${counts.total}`,
+    `pending=${counts.pending}`,
+    `running=${counts.running}`,
+    `complete=${counts.complete}`,
+    `failed=${counts.failed}`,
+  ];
+  return `Batches: ${parts.join("  ")}`;
+}
+
+function formatTaskCounts(summary: RunStatusSummary): string {
+  const counts = summary.taskCounts;
+  const parts = [
+    `total=${counts.total}`,
+    `pending=${counts.pending}`,
+    `running=${counts.running}`,
+    `complete=${counts.complete}`,
+    `failed=${counts.failed}`,
+    `skipped=${counts.skipped}`,
+  ];
+  return `Tasks: ${parts.join("  ")}`;
+}
+
+function printTaskTable(rows: TaskStatusRow[]): void {
+  console.log("Tasks:");
+  if (rows.length === 0) {
+    console.log("  (no tasks tracked for this run)");
+    return;
   }
 
-  console.log("Tasks:");
-  const ids = Object.keys(state.tasks).sort();
-  for (const id of ids) {
-    const t = state.tasks[id];
-    const branch = t.branch ? `  branch=${t.branch}` : "";
-    console.log(`  [${id}] ${t.status}${branch}`);
+  const idWidth = Math.max("ID".length, ...rows.map((r) => r.id.length));
+  const statusWidth = Math.max("Status".length, ...rows.map((r) => r.status.length));
+  const attemptsWidth = Math.max("Attempts".length, ...rows.map((r) => `${r.attempts}`.length));
+  const branchWidth = Math.max(
+    "Branch".length,
+    ...rows.map((r) => (r.branch ? r.branch.length : 1)),
+  );
+
+  console.log(
+    `  ${pad("ID", idWidth)}  ${pad("Status", statusWidth)}  ${pad(
+      "Attempts",
+      attemptsWidth,
+    )}  ${pad("Branch", branchWidth)}`,
+  );
+
+  for (const row of rows) {
+    const branch = row.branch ?? "-";
+    console.log(
+      `  ${pad(row.id, idWidth)}  ${pad(row.status, statusWidth)}  ${pad(
+        `${row.attempts}`,
+        attemptsWidth,
+      )}  ${pad(branch, branchWidth)}`,
+    );
   }
 }
 
-function findLatestRunId(projectName: string): string | null {
-  const dir = runStateDir(projectName);
-  if (!fs.existsSync(dir)) return null;
-
-  const files = fs.readdirSync(dir).filter((f) => f.startsWith("run-") && f.endsWith(".json"));
-  if (files.length === 0) return null;
-
-  const withMtime = files
-    .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-
-  const latest = withMtime[0].f;
-  return latest.replace(/^run-/, "").replace(/\.json$/, "");
+function pad(value: string, width: number): string {
+  return value.padEnd(width, " ");
 }

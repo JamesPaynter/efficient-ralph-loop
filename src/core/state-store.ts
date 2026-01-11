@@ -5,8 +5,50 @@ import { randomUUID } from "node:crypto";
 import fse from "fs-extra";
 
 import { runStateDir, runStatePath, runStateTempPath } from "./paths.js";
-import { RunStateSchema, resetRunningTasks, type RunState } from "./state.js";
+import {
+  RunStateSchema,
+  resetRunningTasks,
+  type BatchState,
+  type RunState,
+  type RunStatus,
+  type TaskState,
+  type TaskStatus,
+} from "./state.js";
 import { isoNow } from "./utils.js";
+
+export type BatchStatusCounts = {
+  total: number;
+  pending: number;
+  running: number;
+  complete: number;
+  failed: number;
+};
+
+export type TaskStatusCounts = {
+  total: number;
+  pending: number;
+  running: number;
+  complete: number;
+  failed: number;
+  skipped: number;
+};
+
+export type TaskStatusRow = {
+  id: string;
+  status: TaskStatus;
+  attempts: number;
+  branch: string | null;
+};
+
+export type RunStatusSummary = {
+  runId: string;
+  status: RunStatus;
+  startedAt: string;
+  updatedAt: string;
+  batchCounts: BatchStatusCounts;
+  taskCounts: TaskStatusCounts;
+  tasks: TaskStatusRow[];
+};
 
 export class StateStore {
   constructor(
@@ -78,6 +120,18 @@ export async function loadRunStateForProject(
   return { runId: resolvedRunId, state };
 }
 
+export function summarizeRunState(state: RunState): RunStatusSummary {
+  return {
+    runId: state.run_id,
+    status: state.status,
+    startedAt: state.started_at,
+    updatedAt: state.updated_at,
+    batchCounts: summarizeBatchStatuses(state.batches),
+    taskCounts: summarizeTaskStatuses(state.tasks),
+    tasks: buildTaskStatusRows(state.tasks),
+  };
+}
+
 export async function loadRunState(statePath: string): Promise<RunState> {
   const raw = await fse.readFile(statePath, "utf8");
   const parsed = RunStateSchema.safeParse(JSON.parse(raw));
@@ -113,6 +167,50 @@ export async function recoverRunState(
   resetRunningTasks(state, reason);
   await saveRunState(statePath, state, tempPath);
   return state;
+}
+
+function summarizeBatchStatuses(batches: BatchState[]): BatchStatusCounts {
+  const counts: BatchStatusCounts = {
+    total: batches.length,
+    pending: 0,
+    running: 0,
+    complete: 0,
+    failed: 0,
+  };
+
+  for (const batch of batches) {
+    counts[batch.status] += 1;
+  }
+
+  return counts;
+}
+
+function summarizeTaskStatuses(tasks: Record<string, TaskState>): TaskStatusCounts {
+  const counts: TaskStatusCounts = {
+    total: Object.keys(tasks).length,
+    pending: 0,
+    running: 0,
+    complete: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const task of Object.values(tasks)) {
+    counts[task.status] += 1;
+  }
+
+  return counts;
+}
+
+function buildTaskStatusRows(tasks: Record<string, TaskState>): TaskStatusRow[] {
+  return Object.entries(tasks)
+    .map(([id, task]) => ({
+      id,
+      status: task.status,
+      attempts: task.attempts ?? 0,
+      branch: task.branch ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }));
 }
 
 async function writeStateFile(

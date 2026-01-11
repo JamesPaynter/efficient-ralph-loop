@@ -16,6 +16,7 @@ import {
   findLatestRunId,
   loadRunState,
   loadRunStateForProject,
+  summarizeRunState,
   saveRunState,
   StateStore,
 } from "./state-store.js";
@@ -200,5 +201,65 @@ describe("state store", () => {
       process.env.TASK_ORCHESTRATOR_HOME = originalHome;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
+  });
+
+  it("summarizes run state for status output", () => {
+    const state = createRunState({
+      runId: "summary-1",
+      project: "demo",
+      repoPath: "/repo",
+      mainBranch: "main",
+      taskIds: ["001", "002", "003", "004"],
+    });
+
+    state.status = "failed";
+    state.started_at = "2024-05-01T00:00:00.000Z";
+    state.updated_at = "2024-05-01T01:00:00.000Z";
+
+    state.tasks["001"].status = "complete";
+    state.tasks["001"].attempts = 1;
+    state.tasks["001"].branch = "feature/001-work";
+    state.tasks["002"].status = "failed";
+    state.tasks["002"].attempts = 2;
+    state.tasks["003"].status = "running";
+    state.tasks["003"].attempts = 1;
+    state.tasks["004"].status = "skipped";
+
+    state.batches = [
+      { batch_id: 1, status: "complete", tasks: ["001", "002"] },
+      { batch_id: 2, status: "running", tasks: ["003"] },
+      { batch_id: 3, status: "failed", tasks: ["004"] },
+    ];
+
+    const summary = summarizeRunState(state);
+
+    expect(summary).toMatchObject({
+      runId: "summary-1",
+      status: "failed",
+      startedAt: "2024-05-01T00:00:00.000Z",
+      updatedAt: "2024-05-01T01:00:00.000Z",
+      batchCounts: {
+        total: 3,
+        pending: 0,
+        running: 1,
+        complete: 1,
+        failed: 1,
+      },
+      taskCounts: {
+        total: 4,
+        pending: 0,
+        running: 1,
+        complete: 1,
+        failed: 1,
+        skipped: 1,
+      },
+    });
+
+    expect(summary.tasks).toEqual([
+      { id: "001", status: "complete", attempts: 1, branch: "feature/001-work" },
+      { id: "002", status: "failed", attempts: 2, branch: null },
+      { id: "003", status: "running", attempts: 1, branch: null },
+      { id: "004", status: "skipped", attempts: 0, branch: null },
+    ]);
   });
 });
