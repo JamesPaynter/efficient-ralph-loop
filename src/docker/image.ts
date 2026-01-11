@@ -1,4 +1,5 @@
 import { execa } from "execa";
+
 import { DockerError } from "../core/errors.js";
 
 export async function buildWorkerImage(opts: {
@@ -7,14 +8,9 @@ export async function buildWorkerImage(opts: {
   context: string;
 }): Promise<void> {
   try {
-    await execa("docker", [
-      "build",
-      "-f",
-      opts.dockerfile,
-      "-t",
-      opts.tag,
-      opts.context
-    ], { stdio: "inherit" });
+    await execa("docker", ["build", "-f", opts.dockerfile, "-t", opts.tag, opts.context], {
+      stdio: "inherit",
+    });
   } catch (err: any) {
     throw new DockerError(`docker build failed: ${err?.message ?? String(err)}`);
   }

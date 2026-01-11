@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { isoNow } from "./utils.js";
-import { readJsonFile, writeJsonFile } from "./utils.js";
+
+import { isoNow, readJsonFile, writeJsonFile } from "./utils.js";
 
 export const TaskStatusSchema = z.enum(["pending", "running", "complete", "failed", "skipped"]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
@@ -18,7 +18,7 @@ export const TaskStateSchema = z.object({
   attempts: z.number().int().default(0),
   started_at: z.string().optional(),
   completed_at: z.string().optional(),
-  last_error: z.string().optional()
+  last_error: z.string().optional(),
 });
 
 export type TaskState = z.infer<typeof TaskStateSchema>;
@@ -30,7 +30,7 @@ export const BatchStateSchema = z.object({
   started_at: z.string().optional(),
   completed_at: z.string().optional(),
   merge_commit: z.string().optional(),
-  integration_doctor_passed: z.boolean().optional()
+  integration_doctor_passed: z.boolean().optional(),
 });
 
 export type BatchState = z.infer<typeof BatchStateSchema>;
@@ -44,7 +44,7 @@ export const RunStateSchema = z.object({
   updated_at: z.string(),
   status: z.enum(["running", "complete", "failed"]),
   batches: z.array(BatchStateSchema),
-  tasks: z.record(TaskStateSchema)
+  tasks: z.record(TaskStateSchema),
 });
 
 export type RunState = z.infer<typeof RunStateSchema>;
@@ -71,7 +71,7 @@ export function createRunState(args: {
     updated_at: now,
     status: "running",
     batches: [],
-    tasks
+    tasks,
   };
 }
 

@@ -1,5 +1,7 @@
-import Docker from "dockerode";
 import path from "node:path";
+
+import Docker from "dockerode";
+
 import { DockerError } from "../core/errors.js";
 
 export type ContainerSpec = {
@@ -28,7 +30,10 @@ export async function imageExists(docker: Docker, imageName: string): Promise<bo
   }
 }
 
-export async function createContainer(docker: Docker, spec: ContainerSpec): Promise<Docker.Container> {
+export async function createContainer(
+  docker: Docker,
+  spec: ContainerSpec,
+): Promise<Docker.Container> {
   try {
     const Env = Object.entries(spec.env)
       .filter(([, v]) => v !== undefined)
@@ -46,13 +51,15 @@ export async function createContainer(docker: Docker, spec: ContainerSpec): Prom
       HostConfig: {
         Binds,
         NetworkMode: "bridge",
-        AutoRemove: false
-      }
+        AutoRemove: false,
+      },
     });
 
     return container;
   } catch (err: any) {
-    throw new DockerError(`Failed to create container ${spec.name}: ${err?.message ?? String(err)}`);
+    throw new DockerError(
+      `Failed to create container ${spec.name}: ${err?.message ?? String(err)}`,
+    );
   }
 }
 
@@ -79,7 +86,10 @@ export async function removeContainer(container: Docker.Container): Promise<void
   }
 }
 
-export async function findContainerByName(docker: Docker, name: string): Promise<Docker.Container | null> {
+export async function findContainerByName(
+  docker: Docker,
+  name: string,
+): Promise<Docker.Container | null> {
   const containers = await docker.listContainers({ all: true });
   const match = containers.find((c) => (c.Names ?? []).includes(`/${name}`));
   if (!match) return null;

@@ -7,7 +7,7 @@ import { runLogsDir, runStateDir } from "../core/paths.js";
 export async function logsCommand(
   projectName: string,
   _config: ProjectConfig,
-  opts: { runId?: string; taskId?: string; follow?: boolean; search?: string }
+  opts: { runId?: string; taskId?: string; follow?: boolean; search?: string },
 ): Promise<void> {
   const runId = opts.runId ?? findLatestRunIdFromLogs(projectName);
   if (!runId) {
@@ -24,9 +24,7 @@ export async function logsCommand(
       console.log(`No task logs dir found: ${tasksDir}`);
       return;
     }
-    const match = fs
-      .readdirSync(tasksDir)
-      .find((d) => d.startsWith(`${opts.taskId}-`));
+    const match = fs.readdirSync(tasksDir).find((d) => d.startsWith(`${opts.taskId}-`));
     if (!match) {
       console.log(`No task log directory found for task ${opts.taskId}.`);
       return;

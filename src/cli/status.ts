@@ -5,7 +5,11 @@ import type { ProjectConfig } from "../core/config.js";
 import { runStateDir, runStatePath } from "../core/paths.js";
 import { loadRunState } from "../core/state.js";
 
-export async function statusCommand(projectName: string, _config: ProjectConfig, opts: { runId?: string }): Promise<void> {
+export async function statusCommand(
+  projectName: string,
+  _config: ProjectConfig,
+  opts: { runId?: string },
+): Promise<void> {
   const runId = opts.runId ?? findLatestRunId(projectName);
   if (!runId) {
     console.log(`No runs found for project ${projectName}.`);

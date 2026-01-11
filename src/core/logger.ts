@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+
 import fse from "fs-extra";
 
 export type JsonObject = Record<string, unknown>;
@@ -24,6 +25,6 @@ export class JsonlLogger {
 export function eventWithTs(event: JsonObject): JsonObject {
   return {
     ts: new Date().toISOString(),
-    ...event
+    ...event,
   };
 }

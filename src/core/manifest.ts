@@ -2,17 +2,17 @@ import { z } from "zod";
 
 export const LocksSchema = z.object({
   reads: z.array(z.string()).default([]),
-  writes: z.array(z.string()).default([])
+  writes: z.array(z.string()).default([]),
 });
 
 export const FilesSchema = z.object({
   reads: z.array(z.string()).default([]),
-  writes: z.array(z.string()).default([])
+  writes: z.array(z.string()).default([]),
 });
 
 export const VerifySchema = z.object({
   doctor: z.string().min(1),
-  fast: z.string().optional()
+  fast: z.string().optional(),
 });
 
 export const TaskManifestSchema = z.object({
@@ -24,7 +24,7 @@ export const TaskManifestSchema = z.object({
   locks: LocksSchema.default({ reads: [], writes: [] }),
   files: FilesSchema.default({ reads: [], writes: [] }),
   affected_tests: z.array(z.string()).default([]),
-  verify: VerifySchema.optional()
+  verify: VerifySchema.optional(),
 });
 
 export type TaskManifest = z.infer<typeof TaskManifestSchema>;

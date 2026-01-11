@@ -1,12 +1,13 @@
 import path from "node:path";
-import fse from "fs-extra";
-import { execa } from "execa";
+
 import { Codex } from "@openai/codex-sdk";
+import { execa } from "execa";
+import fse from "fs-extra";
 
 import type { ProjectConfig } from "./config.js";
-import { slugify, ensureDir, isoNow } from "./utils.js";
 import { JsonlLogger, eventWithTs } from "./logger.js";
 import { orchestratorHome } from "./paths.js";
+import { slugify, ensureDir, isoNow } from "./utils.js";
 
 export type PlannedTask = {
   id: string;
@@ -40,39 +41,49 @@ const PlannerOutputSchema = {
             type: "object",
             properties: {
               reads: { type: "array", items: { type: "string" } },
-              writes: { type: "array", items: { type: "string" } }
+              writes: { type: "array", items: { type: "string" } },
             },
             required: ["reads", "writes"],
-            additionalProperties: false
+            additionalProperties: false,
           },
           files: {
             type: "object",
             properties: {
               reads: { type: "array", items: { type: "string" } },
-              writes: { type: "array", items: { type: "string" } }
+              writes: { type: "array", items: { type: "string" } },
             },
             required: ["reads", "writes"],
-            additionalProperties: false
+            additionalProperties: false,
           },
           affected_tests: { type: "array", items: { type: "string" } },
           verify: {
             type: "object",
             properties: {
               doctor: { type: "string" },
-              fast: { type: "string" }
+              fast: { type: "string" },
             },
             required: ["doctor"],
-            additionalProperties: false
+            additionalProperties: false,
           },
-          spec: { type: "string" }
+          spec: { type: "string" },
         },
-        required: ["id", "name", "description", "estimated_minutes", "locks", "files", "affected_tests", "verify", "spec"],
-        additionalProperties: false
-      }
-    }
+        required: [
+          "id",
+          "name",
+          "description",
+          "estimated_minutes",
+          "locks",
+          "files",
+          "affected_tests",
+          "verify",
+          "spec",
+        ],
+        additionalProperties: false,
+      },
+    },
   },
   required: ["tasks"],
-  additionalProperties: false
+  additionalProperties: false,
 } as const;
 
 export async function planFromImplementationPlan(args: {
@@ -106,7 +117,7 @@ export async function planFromImplementationPlan(args: {
     resourcesBlock,
     doctor: config.doctor,
     implementationPlan,
-    codebaseTree
+    codebaseTree,
   });
 
   const log = args.log;
@@ -125,7 +136,7 @@ export async function planFromImplementationPlan(args: {
   let parsed: PlanResult;
   try {
     parsed = JSON.parse(result.finalResponse) as PlanResult;
-  } catch (err) {
+  } catch (_err) {
     throw new Error(`Planner returned non-JSON output. Raw:\n${result.finalResponse}`);
   }
 
@@ -155,18 +166,31 @@ export async function planFromImplementationPlan(args: {
       locks: t.locks,
       files: t.files,
       affected_tests: t.affected_tests,
-      verify: t.verify
+      verify: t.verify,
     };
 
-    await fse.writeFile(path.join(taskDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+    await fse.writeFile(
+      path.join(taskDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2) + "\n",
+      "utf8",
+    );
     await fse.writeFile(path.join(taskDir, "spec.md"), t.spec.trim() + "\n", "utf8");
   }
 
   // Also write a top-level plan index.
   await fse.writeFile(
     path.join(outputDir, "_plan.json"),
-    JSON.stringify({ generated_at: isoNow(), project: projectName, input: inputAbs, task_count: parsed.tasks.length }, null, 2) + "\n",
-    "utf8"
+    JSON.stringify(
+      {
+        generated_at: isoNow(),
+        project: projectName,
+        input: inputAbs,
+        task_count: parsed.tasks.length,
+      },
+      null,
+      2,
+    ) + "\n",
+    "utf8",
   );
 
   log?.log(eventWithTs({ type: "planner.write.complete", output_dir: outputDir }));
@@ -232,7 +256,7 @@ async function writePlannerCodexConfig(filePath: string, model: string): Promise
     // "never" means no approval prompts (the planner runs unattended; sandbox is read-only).
     `approval_policy = "never"`,
     `sandbox_mode = "read-only"`,
-    ""
+    "",
   ].join("\n");
   await fse.ensureDir(path.dirname(filePath));
   await fse.writeFile(filePath, content, "utf8");

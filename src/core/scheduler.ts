@@ -22,7 +22,10 @@ export function addToBatch(task: TaskManifest, batch: BatchFiles): void {
   for (const r of task.locks.writes ?? []) batch.writes.add(r);
 }
 
-export function buildGreedyBatch(available: TaskSpec[], maxParallel: number): { batch: TaskSpec[]; remaining: TaskSpec[] } {
+export function buildGreedyBatch(
+  available: TaskSpec[],
+  maxParallel: number,
+): { batch: TaskSpec[]; remaining: TaskSpec[] } {
   const remaining = [...available];
   const batch: TaskSpec[] = [];
   const batchLocks: BatchFiles = { reads: new Set(), writes: new Set() };

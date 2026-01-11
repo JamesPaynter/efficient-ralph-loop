@@ -1,20 +1,44 @@
 import path from "node:path";
-import fse from "fs-extra";
-import fg from "fast-glob";
+
 import { execa, execaCommand } from "execa";
+import fg from "fast-glob";
+import fse from "fs-extra";
+
+import {
+  dockerClient,
+  createContainer,
+  startContainer,
+  waitContainer,
+  removeContainer,
+  imageExists,
+  findContainerByName,
+} from "../docker/docker.js";
+import { buildWorkerImage } from "../docker/image.js";
+import { attachLineStream } from "../docker/streams.js";
+import { cloneRepo, createBranchInClone, checkoutBranchInClone } from "../git/branches.js";
+import {
+  ensureCleanWorkingTree,
+  checkout,
+  mergeNoFf,
+  addRemote,
+  fetchRemote,
+  removeRemote,
+} from "../git/git.js";
 
 import type { ProjectConfig } from "./config.js";
-import { TaskManifestSchema, type TaskSpec } from "./manifest.js";
-import { slugify, ensureDir, defaultRunId, isoNow, pathExists } from "./utils.js";
-import { createRunState, saveRunState, loadRunState, type RunState } from "./state.js";
 import { JsonlLogger, eventWithTs } from "./logger.js";
+import { TaskManifestSchema, type TaskSpec } from "./manifest.js";
+import {
+  orchestratorHome,
+  runStatePath,
+  runLogsDir,
+  taskLogsDir,
+  taskWorkspaceDir,
+  workerCodexHomeDir,
+} from "./paths.js";
 import { buildGreedyBatch, topologicalReady } from "./scheduler.js";
-import { orchestratorHome, runStatePath, runLogsDir, taskLogsDir, taskWorkspaceDir, workerCodexHomeDir } from "./paths.js";
-import { dockerClient, createContainer, startContainer, waitContainer, removeContainer, imageExists, findContainerByName } from "../docker/docker.js";
-import { attachLineStream } from "../docker/streams.js";
-import { buildWorkerImage } from "../docker/image.js";
-import { ensureCleanWorkingTree, checkout, mergeNoFf, addRemote, fetchRemote, removeRemote } from "../git/git.js";
-import { cloneRepo, createBranchInClone, checkoutBranchInClone } from "../git/branches.js";
+import { createRunState, saveRunState, loadRunState, type RunState } from "./state.js";
+import { slugify, ensureDir, defaultRunId, isoNow, pathExists } from "./utils.js";
 
 export type RunOptions = {
   runId?: string;
@@ -25,7 +49,10 @@ export type RunOptions = {
   cleanupOnSuccess?: boolean;
 };
 
-export async function loadTaskSpecs(repoPath: string, tasksDirRelative: string): Promise<TaskSpec[]> {
+export async function loadTaskSpecs(
+  repoPath: string,
+  tasksDirRelative: string,
+): Promise<TaskSpec[]> {
   const tasksDirAbs = path.join(repoPath, tasksDirRelative);
   const manifestPaths = await fg(["*/manifest.json"], { cwd: tasksDirAbs, absolute: true });
 
@@ -49,7 +76,7 @@ export async function loadTaskSpecs(repoPath: string, tasksDirRelative: string):
       taskDir,
       manifestPath,
       specPath,
-      slug
+      slug,
     });
   }
 
@@ -64,7 +91,11 @@ export async function loadTaskSpecs(repoPath: string, tasksDirRelative: string):
   return tasks;
 }
 
-export async function runProject(projectName: string, config: ProjectConfig, opts: RunOptions): Promise<{ runId: string; state: RunState }> {
+export async function runProject(
+  projectName: string,
+  config: ProjectConfig,
+  opts: RunOptions,
+): Promise<{ runId: string; state: RunState }> {
   const runId = opts.runId ?? defaultRunId();
   const maxParallel = opts.maxParallel ?? config.max_parallel;
 
@@ -77,7 +108,9 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
   const logsDir = runLogsDir(projectName, runId);
   const orchLog = new JsonlLogger(path.join(logsDir, "orchestrator.jsonl"));
 
-  orchLog.log(eventWithTs({ type: "run.start", run_id: runId, project: projectName, repo_path: repoPath }));
+  orchLog.log(
+    eventWithTs({ type: "run.start", run_id: runId, project: projectName, repo_path: repoPath }),
+  );
 
   // Ensure repo is clean and on integration branch.
   await ensureCleanWorkingTree(repoPath);
@@ -96,7 +129,16 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
   if (tasks.length === 0) {
     orchLog.log(eventWithTs({ type: "run.no_tasks" }));
     orchLog.close();
-    return { runId, state: createRunState({ runId, project: projectName, repoPath, mainBranch: config.main_branch, taskIds: [] }) };
+    return {
+      runId,
+      state: createRunState({
+        runId,
+        project: projectName,
+        repoPath,
+        mainBranch: config.main_branch,
+        taskIds: [],
+      }),
+    };
   }
 
   // Ensure worker image exists.
@@ -105,10 +147,16 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
   if (!haveImage) {
     if (opts.buildImage ?? true) {
       orchLog.log(eventWithTs({ type: "docker.image.build.start", image: workerImage }));
-      await buildWorkerImage({ tag: workerImage, dockerfile: config.docker.dockerfile, context: config.docker.build_context });
+      await buildWorkerImage({
+        tag: workerImage,
+        dockerfile: config.docker.dockerfile,
+        context: config.docker.build_context,
+      });
       orchLog.log(eventWithTs({ type: "docker.image.build.complete", image: workerImage }));
     } else {
-      throw new Error(`Docker image not found: ${workerImage}. Build it or run with --build-image.`);
+      throw new Error(
+        `Docker image not found: ${workerImage}. Build it or run with --build-image.`,
+      );
     }
   }
 
@@ -129,7 +177,7 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
     // - Treat previously "running" tasks as "pending" again (we don't attempt to
     //   reattach to old containers in this MVP implementation).
     // - Ensure any newly added tasks appear in state.
-    for (const [id, tState] of Object.entries(state.tasks)) {
+    for (const [_id, tState] of Object.entries(state.tasks)) {
       if (tState.status === "running") {
         tState.status = "pending";
         tState.container_id = undefined;
@@ -152,7 +200,7 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
       project: projectName,
       repoPath,
       mainBranch: config.main_branch,
-      taskIds: tasks.map((t) => t.manifest.id)
+      taskIds: tasks.map((t) => t.manifest.id),
     });
     await saveRunState(statePath, state);
   }
@@ -161,9 +209,13 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
   const completed = new Set<string>(
     Object.entries(state.tasks)
       .filter(([, s]) => s.status === "complete" || s.status === "skipped")
-      .map(([id]) => id)
+      .map(([id]) => id),
   );
-  const failed = new Set<string>(Object.entries(state.tasks).filter(([, s]) => s.status === "failed").map(([id]) => id));
+  const failed = new Set<string>(
+    Object.entries(state.tasks)
+      .filter(([, s]) => s.status === "failed")
+      .map(([id]) => id),
+  );
 
   let batchId = Math.max(0, ...state.batches.map((b) => b.batch_id));
   while (true) {
@@ -172,7 +224,12 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
 
     const ready = topologicalReady(pendingTasks, completed);
     if (ready.length === 0) {
-      orchLog.log(eventWithTs({ type: "run.deadlock", message: "No dependency-satisfied tasks remaining. Check dependencies field." }));
+      orchLog.log(
+        eventWithTs({
+          type: "run.deadlock",
+          message: "No dependency-satisfied tasks remaining. Check dependencies field.",
+        }),
+      );
       state.status = "failed";
       await saveRunState(statePath, state);
       break;
@@ -182,13 +239,18 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
     const { batch } = buildGreedyBatch(ready, maxParallel);
 
     const batchTaskIds = batch.map((t) => t.manifest.id);
-    state.batches.push({ batch_id: batchId, status: "running", tasks: batchTaskIds, started_at: isoNow() });
+    state.batches.push({
+      batch_id: batchId,
+      status: "running",
+      tasks: batchTaskIds,
+      started_at: isoNow(),
+    });
     for (const t of batch) {
       state.tasks[t.manifest.id] = {
         ...state.tasks[t.manifest.id],
         status: "running",
         batch_id: batchId,
-        started_at: isoNow()
+        started_at: isoNow(),
       };
     }
     await saveRunState(statePath, state);
@@ -227,7 +289,7 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
           model: config.worker.model,
           // "never" means no approval prompts (unattended runs). See Codex config reference.
           approvalPolicy: "never",
-          sandboxMode: "danger-full-access"
+          sandboxMode: "danger-full-access",
         });
 
         // Clone repo into workspace
@@ -249,7 +311,9 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
         const taskEvents = new JsonlLogger(path.join(tLogsDir, "events.jsonl"));
 
         // Create container
-        const containerName = `to-${projectName}-${runId}-${taskId}-${taskSlug}`.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 120);
+        const containerName = `to-${projectName}-${runId}-${taskId}-${taskSlug}`
+          .replace(/[^a-zA-Z0-9_.-]/g, "-")
+          .slice(0, 120);
         const existing = await findContainerByName(docker, containerName);
         if (existing) {
           // If container name already exists (stale), remove it.
@@ -267,28 +331,38 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
 
             TASK_ID: taskId,
             TASK_SLUG: taskSlug,
-            TASK_MANIFEST_PATH: path.posix.join("/workspace", config.tasks_dir, path.basename(task.taskDir), "manifest.json"),
-            TASK_SPEC_PATH: path.posix.join("/workspace", config.tasks_dir, path.basename(task.taskDir), "spec.md"),
+            TASK_MANIFEST_PATH: path.posix.join(
+              "/workspace",
+              config.tasks_dir,
+              path.basename(task.taskDir),
+              "manifest.json",
+            ),
+            TASK_SPEC_PATH: path.posix.join(
+              "/workspace",
+              config.tasks_dir,
+              path.basename(task.taskDir),
+              "spec.md",
+            ),
             TASK_BRANCH: branchName,
-            DOCTOR_CMD: (task.manifest.verify?.doctor ?? config.doctor),
+            DOCTOR_CMD: task.manifest.verify?.doctor ?? config.doctor,
             DOCTOR_TIMEOUT: config.doctor_timeout ? String(config.doctor_timeout) : undefined,
             MAX_RETRIES: String(config.max_retries),
             BOOTSTRAP_CMDS: config.bootstrap ? JSON.stringify(config.bootstrap) : undefined,
             CODEX_MODEL: config.worker.model,
             CODEX_HOME: "/codex-home",
-            RUN_LOGS_DIR: "/run-logs"
+            RUN_LOGS_DIR: "/run-logs",
           },
           binds: [
             { hostPath: workspace, containerPath: "/workspace", mode: "rw" },
             { hostPath: codexHome, containerPath: "/codex-home", mode: "rw" },
-            { hostPath: tLogsDir, containerPath: "/run-logs", mode: "rw" }
+            { hostPath: tLogsDir, containerPath: "/run-logs", mode: "rw" },
           ],
           workdir: "/workspace",
           labels: {
             "task-orchestrator.project": projectName,
             "task-orchestrator.run_id": runId,
-            "task-orchestrator.task_id": taskId
-          }
+            "task-orchestrator.task_id": taskId,
+          },
         });
 
         const containerInfo = await container.inspect();
@@ -299,7 +373,14 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
         state.tasks[taskId].logs_dir = tLogsDir;
         await saveRunState(statePath, state);
 
-        orchLog.log(eventWithTs({ type: "container.create", task_id: taskId, container_id: containerId, name: containerName }));
+        orchLog.log(
+          eventWithTs({
+            type: "container.create",
+            task_id: taskId,
+            container_id: containerId,
+            name: containerName,
+          }),
+        );
 
         // Attach log stream
         const detach = await attachLineStream(container, (line, stream) => {
@@ -313,20 +394,29 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
         });
 
         await startContainer(container);
-        orchLog.log(eventWithTs({ type: "container.start", task_id: taskId, container_id: containerId }));
+        orchLog.log(
+          eventWithTs({ type: "container.start", task_id: taskId, container_id: containerId }),
+        );
 
         const waited = await waitContainer(container);
         detach();
         taskEvents.close();
 
-        orchLog.log(eventWithTs({ type: "container.exit", task_id: taskId, container_id: containerId, exit_code: waited.exitCode }));
+        orchLog.log(
+          eventWithTs({
+            type: "container.exit",
+            task_id: taskId,
+            container_id: containerId,
+            exit_code: waited.exitCode,
+          }),
+        );
 
         if (waited.exitCode === 0) {
           return { taskId, taskSlug, branchName, workspace, success: true as const };
         }
 
         return { taskId, taskSlug, branchName, workspace, success: false as const };
-      })
+      }),
     );
 
     // Update task statuses
@@ -347,7 +437,13 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
     // Merge successful tasks sequentially into integration branch.
     const toMerge = results.filter((r) => r.success);
     if (toMerge.length > 0) {
-      orchLog.log(eventWithTs({ type: "batch.merging", batch_id: batchId, tasks: toMerge.map((r) => r.taskId) }));
+      orchLog.log(
+        eventWithTs({
+          type: "batch.merging",
+          batch_id: batchId,
+          tasks: toMerge.map((r) => r.taskId),
+        }),
+      );
       await checkout(repoPath, config.main_branch);
 
       for (const r of toMerge) {
@@ -362,15 +458,27 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
       }
 
       // Integration doctor
-      orchLog.log(eventWithTs({ type: "doctor.integration.start", batch_id: batchId, command: config.doctor }));
+      orchLog.log(
+        eventWithTs({
+          type: "doctor.integration.start",
+          batch_id: batchId,
+          command: config.doctor,
+        }),
+      );
       const doctorRes = await execaCommand(config.doctor, {
         cwd: repoPath,
         shell: true,
         reject: false,
-        timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined
+        timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
       });
       const doctorOk = doctorRes.exitCode === 0;
-      orchLog.log(eventWithTs({ type: doctorOk ? "doctor.integration.pass" : "doctor.integration.fail", batch_id: batchId, exit_code: doctorRes.exitCode }));
+      orchLog.log(
+        eventWithTs({
+          type: doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
+          batch_id: batchId,
+          exit_code: doctorRes.exitCode,
+        }),
+      );
 
       const b = state.batches.find((b) => b.batch_id === batchId);
       if (b) {
@@ -418,7 +526,7 @@ async function writeCodexConfig(
     // Valid values per Codex config reference.
     approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
     sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
-  }
+  },
 ): Promise<void> {
   // Codex config format uses root keys in config.toml.
   // See upstream examples and config reference.
@@ -427,7 +535,7 @@ async function writeCodexConfig(
     `model = "${opts.model}"`,
     `approval_policy = "${opts.approvalPolicy}"`,
     `sandbox_mode = "${opts.sandboxMode}"`,
-    ""
+    "",
   ].join("\n");
   await fse.ensureDir(path.dirname(filePath));
   await fse.writeFile(filePath, content, "utf8");

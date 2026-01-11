@@ -1,9 +1,9 @@
 import path from "node:path";
 
 import type { ProjectConfig } from "../core/config.js";
-import { planFromImplementationPlan } from "../core/planner.js";
-import { runLogsDir } from "../core/paths.js";
 import { JsonlLogger, eventWithTs } from "../core/logger.js";
+import { runLogsDir } from "../core/paths.js";
+import { planFromImplementationPlan } from "../core/planner.js";
 import { defaultRunId } from "../core/utils.js";
 
 export async function planProject(
@@ -13,7 +13,7 @@ export async function planProject(
     input: string;
     output?: string;
     dryRun?: boolean;
-  }
+  },
 ): Promise<void> {
   const runId = defaultRunId();
   const logsDir = runLogsDir(projectName, `plan-${runId}`);
@@ -31,7 +31,7 @@ export async function planProject(
     inputPath: opts.input,
     outputDir,
     dryRun: opts.dryRun,
-    log
+    log,
   });
 
   if (opts.dryRun) {

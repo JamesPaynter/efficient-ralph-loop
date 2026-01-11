@@ -43,7 +43,7 @@ export function taskWorkspaceDir(
   projectName: string,
   runId: string,
   taskId: string,
-  taskSlug: string
+  taskSlug: string,
 ): string {
   return path.join(runWorkspaceDir(projectName, runId), "tasks", `${taskId}-${taskSlug}`);
 }
@@ -52,7 +52,7 @@ export function taskLogsDir(
   projectName: string,
   runId: string,
   taskId: string,
-  taskSlug: string
+  taskSlug: string,
 ): string {
   return path.join(runLogsDir(projectName, runId), "tasks", `${taskId}-${taskSlug}`);
 }
@@ -65,7 +65,7 @@ export function workerCodexHomeDir(
   projectName: string,
   runId: string,
   taskId: string,
-  taskSlug: string
+  taskSlug: string,
 ): string {
   return path.join(runWorkspaceDir(projectName, runId), "codex", `${taskId}-${taskSlug}`);
 }

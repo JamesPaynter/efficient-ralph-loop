@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { execa, execaCommand } from "execa";
 import { Codex } from "@openai/codex-sdk";
+import { execa, execaCommand } from "execa";
 
 type Json = Record<string, unknown>;
 
@@ -26,12 +26,19 @@ async function main(): Promise<void> {
   const manifestPath = envOrThrow("TASK_MANIFEST_PATH");
   const doctorCmd = envOrThrow("DOCTOR_CMD");
   const maxRetries = parseInt(process.env.MAX_RETRIES || "20", 10);
-  const doctorTimeoutSeconds = process.env.DOCTOR_TIMEOUT ? parseInt(process.env.DOCTOR_TIMEOUT, 10) : undefined;
+  const doctorTimeoutSeconds = process.env.DOCTOR_TIMEOUT
+    ? parseInt(process.env.DOCTOR_TIMEOUT, 10)
+    : undefined;
 
-  const bootstrapCmds = process.env.BOOTSTRAP_CMDS ? JSON.parse(process.env.BOOTSTRAP_CMDS) as string[] : [];
+  const bootstrapCmds = process.env.BOOTSTRAP_CMDS
+    ? (JSON.parse(process.env.BOOTSTRAP_CMDS) as string[])
+    : [];
 
   const spec = fs.readFileSync(specPath, "utf8");
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { id: string; name: string };
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    id: string;
+    name: string;
+  };
 
   // Ensure git identity exists so commits don't fail.
   await ensureGitIdentity();
@@ -44,7 +51,7 @@ async function main(): Promise<void> {
         cwd: "/workspace",
         shell: true,
         reject: false,
-        stdio: "pipe"
+        stdio: "pipe",
       });
       log({ type: "bootstrap.cmd", task_id: taskId, cmd, exit_code: res.exitCode });
       if (res.exitCode !== 0) {
@@ -65,9 +72,10 @@ async function main(): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     log({ type: "turn.start", task_id: taskId, attempt });
 
-    const prompt = attempt === 1
-      ? buildInitialPrompt({ spec, manifestPath, manifest })
-      : buildRetryPrompt({ spec, lastDoctorOutput, attempt });
+    const prompt =
+      attempt === 1
+        ? buildInitialPrompt({ spec, manifestPath, manifest })
+        : buildRetryPrompt({ spec, lastDoctorOutput, attempt });
 
     const { events } = await thread.runStreamed(prompt);
     for await (const event of events) {
@@ -84,7 +92,7 @@ async function main(): Promise<void> {
       shell: true,
       reject: false,
       timeout: doctorTimeoutSeconds ? doctorTimeoutSeconds * 1000 : undefined,
-      stdio: "pipe"
+      stdio: "pipe",
     });
 
     const doctorOut = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
@@ -98,7 +106,13 @@ async function main(): Promise<void> {
     }
 
     lastDoctorOutput = doctorOut.slice(0, 12_000); // keep prompt bounded
-    log({ type: "doctor.fail", task_id: taskId, attempt, exit_code: doctorRes.exitCode, summary: lastDoctorOutput.slice(0, 500) });
+    log({
+      type: "doctor.fail",
+      task_id: taskId,
+      attempt,
+      exit_code: doctorRes.exitCode,
+      summary: lastDoctorOutput.slice(0, 500),
+    });
 
     if (attempt < maxRetries) {
       log({ type: "task.retry", task_id: taskId, next_attempt: attempt + 1 });
@@ -127,7 +141,11 @@ Rules:
 `;
 }
 
-function buildRetryPrompt(args: { spec: string; lastDoctorOutput: string; attempt: number }): string {
+function buildRetryPrompt(args: {
+  spec: string;
+  lastDoctorOutput: string;
+  attempt: number;
+}): string {
   return `The doctor command failed on attempt ${args.attempt}.
 
 Doctor output:
@@ -140,19 +158,32 @@ ${args.spec}`;
 }
 
 async function ensureGitIdentity(): Promise<void> {
-  const nameRes = await execa("git", ["config", "--get", "user.name"], { cwd: "/workspace", reject: false, stdio: "pipe" });
+  const nameRes = await execa("git", ["config", "--get", "user.name"], {
+    cwd: "/workspace",
+    reject: false,
+    stdio: "pipe",
+  });
   if (nameRes.exitCode !== 0) {
     await execa("git", ["config", "user.name", "task-orchestrator"], { cwd: "/workspace" });
   }
-  const emailRes = await execa("git", ["config", "--get", "user.email"], { cwd: "/workspace", reject: false, stdio: "pipe" });
+  const emailRes = await execa("git", ["config", "--get", "user.email"], {
+    cwd: "/workspace",
+    reject: false,
+    stdio: "pipe",
+  });
   if (emailRes.exitCode !== 0) {
-    await execa("git", ["config", "user.email", "task-orchestrator@localhost"], { cwd: "/workspace" });
+    await execa("git", ["config", "user.email", "task-orchestrator@localhost"], {
+      cwd: "/workspace",
+    });
   }
 }
 
 async function maybeCommit(args: { taskId: string; taskName: string }): Promise<void> {
   // If nothing changed, don't fail.
-  const status = await execa("git", ["status", "--porcelain"], { cwd: "/workspace", stdio: "pipe" });
+  const status = await execa("git", ["status", "--porcelain"], {
+    cwd: "/workspace",
+    stdio: "pipe",
+  });
   if (status.stdout.trim().length === 0) {
     log({ type: "git.commit.skip", task_id: args.taskId, reason: "no_changes" });
     return;
@@ -161,16 +192,25 @@ async function maybeCommit(args: { taskId: string; taskName: string }): Promise<
   await execa("git", ["add", "-A"], { cwd: "/workspace" });
 
   const message = `[AUTO] ${args.taskId} ${args.taskName}\n\nTask: ${args.taskId}`;
-  const commit = await execa("git", ["commit", "-m", message], { cwd: "/workspace", reject: false, stdio: "pipe" });
+  const commit = await execa("git", ["commit", "-m", message], {
+    cwd: "/workspace",
+    reject: false,
+    stdio: "pipe",
+  });
 
   if (commit.exitCode === 0) {
-    const sha = (await execa("git", ["rev-parse", "HEAD"], { cwd: "/workspace", stdio: "pipe" })).stdout.trim();
+    const sha = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: "/workspace", stdio: "pipe" })
+    ).stdout.trim();
     log({ type: "git.commit", task_id: args.taskId, sha });
     return;
   }
 
   // A non-zero commit exit can happen if git thinks there's nothing staged (race). Re-check.
-  const status2 = await execa("git", ["status", "--porcelain"], { cwd: "/workspace", stdio: "pipe" });
+  const status2 = await execa("git", ["status", "--porcelain"], {
+    cwd: "/workspace",
+    stdio: "pipe",
+  });
   if (status2.stdout.trim().length === 0) {
     log({ type: "git.commit.skip", task_id: args.taskId, reason: "nothing_to_commit" });
     return;

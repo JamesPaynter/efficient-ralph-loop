@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+
 import fse from "fs-extra";
 
 export function slugify(input: string): string {

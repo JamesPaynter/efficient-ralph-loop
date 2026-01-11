@@ -1,6 +1,8 @@
 import path from "node:path";
-import fse from "fs-extra";
+
 import { execa } from "execa";
+import fse from "fs-extra";
+
 import { GitError } from "../core/errors.js";
 import { ensureDir } from "../core/utils.js";
 
@@ -13,12 +15,7 @@ export async function cloneRepo(opts: {
   // Remove existing directory if present (we always recreate).
   await fse.remove(opts.destDir);
 
-  const args = [
-    "clone",
-    "--no-hardlinks",
-    opts.sourceRepo,
-    opts.destDir
-  ];
+  const args = ["clone", "--no-hardlinks", opts.sourceRepo, opts.destDir];
   if (opts.branch) {
     // NOTE: Cannot use --branch with local source reliably for detached? It's ok.
   }
@@ -34,6 +31,10 @@ export async function checkoutBranchInClone(cwd: string, branch: string): Promis
   await execa("git", ["checkout", branch], { cwd, stdio: "pipe" });
 }
 
-export async function createBranchInClone(cwd: string, branch: string, startPoint: string): Promise<void> {
+export async function createBranchInClone(
+  cwd: string,
+  branch: string,
+  startPoint: string,
+): Promise<void> {
   await execa("git", ["checkout", "-b", branch, startPoint], { cwd, stdio: "pipe" });
 }

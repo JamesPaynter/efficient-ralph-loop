@@ -1,13 +1,18 @@
 import { execa, type Options } from "execa";
+
 import { GitError } from "../core/errors.js";
 
-export async function git(cwd: string, args: string[], opts: Options = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+export async function git(
+  cwd: string,
+  args: string[],
+  opts: Options = {},
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
     const res = await execa("git", args, {
       cwd,
       stdio: "pipe",
       env: process.env,
-      ...opts
+      ...opts,
     });
     const stdout = typeof res.stdout === "string" ? res.stdout : String(res.stdout ?? "");
     const stderr = typeof res.stderr === "string" ? res.stderr : String(res.stderr ?? "");
@@ -24,9 +29,14 @@ export async function git(cwd: string, args: string[], opts: Options = {}): Prom
 export async function ensureCleanWorkingTree(cwd: string): Promise<void> {
   // Ignore untracked files (e.g., .tasks/, logs/) so the tool can operate without
   // requiring those artifacts to be committed.
-  const res = await execa("git", ["status", "--porcelain", "--untracked-files=no"], { cwd, stdio: "pipe" });
+  const res = await execa("git", ["status", "--porcelain", "--untracked-files=no"], {
+    cwd,
+    stdio: "pipe",
+  });
   if (res.stdout.trim().length > 0) {
-    throw new GitError(`Repository has uncommitted changes (cwd=${cwd}). Please commit/stash before running.`);
+    throw new GitError(
+      `Repository has uncommitted changes (cwd=${cwd}). Please commit/stash before running.`,
+    );
   }
 }
 
@@ -44,7 +54,11 @@ export async function checkout(cwd: string, branch: string): Promise<void> {
   await git(cwd, ["checkout", branch]);
 }
 
-export async function checkoutNewBranch(cwd: string, branch: string, startPoint: string): Promise<void> {
+export async function checkoutNewBranch(
+  cwd: string,
+  branch: string,
+  startPoint: string,
+): Promise<void> {
   await git(cwd, ["checkout", "-b", branch, startPoint]);
 }
 

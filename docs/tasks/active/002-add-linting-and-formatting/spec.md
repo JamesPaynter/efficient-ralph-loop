@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Introduce ESLint + Prettier (or equivalent) and wire into npm scripts.
@@ -27,10 +27,10 @@ Introduce ESLint + Prettier (or equivalent) and wire into npm scripts.
 - Rollback: Remove ESLint/Prettier config + deps; restore previous scripts.
 
 ## Implementation Checklist
-- [ ] Add ESLint configuration (TypeScript parser, recommended rules).
-- [ ] Add Prettier config and ensure ESLint integrates cleanly (eslint-config-prettier).
-- [ ] Wire npm scripts for lint and formatting.
-- [ ] Ensure baseline code passes lint.
+- [x] Add ESLint configuration (TypeScript parser, recommended rules).
+- [x] Add Prettier config and ensure ESLint integrates cleanly (eslint-config-prettier).
+- [x] Wire npm scripts for lint and formatting.
+- [x] Ensure baseline code passes lint.
 
 ## Verification
 - `npm run lint`

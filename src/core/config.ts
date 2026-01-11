@@ -1,36 +1,38 @@
 import fs from "node:fs";
 import path from "node:path";
+
 import yaml from "js-yaml";
 import { z } from "zod";
+
 import { ConfigError } from "./errors.js";
 
 const ResourceSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  paths: z.array(z.string()).min(1)
+  paths: z.array(z.string()).min(1),
 });
 
 const PlannerSchema = z.object({
   provider: z.enum(["openai", "anthropic", "codex"]).default("codex"),
   model: z.string().min(1),
-  temperature: z.number().min(0).max(2).optional()
+  temperature: z.number().min(0).max(2).optional(),
 });
 
 const WorkerSchema = z.object({
   model: z.string().min(1),
-  max_retries: z.number().int().positive().optional()
+  max_retries: z.number().int().positive().optional(),
 });
 
 const ValidatorSchema = z.object({
   enabled: z.boolean().default(true),
   provider: z.enum(["openai", "anthropic", "codex"]).default("openai"),
-  model: z.string().min(1)
+  model: z.string().min(1),
 });
 
 const DockerSchema = z.object({
   image: z.string().min(1).default("task-orchestrator-worker:latest"),
   dockerfile: z.string().default("templates/worker.Dockerfile"),
-  build_context: z.string().default(".")
+  build_context: z.string().default("."),
 });
 
 export const ProjectConfigSchema = z.object({
@@ -59,7 +61,7 @@ export const ProjectConfigSchema = z.object({
   worker: WorkerSchema,
 
   test_validator: ValidatorSchema.optional(),
-  doctor_validator: ValidatorSchema.optional()
+  doctor_validator: ValidatorSchema.optional(),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -69,7 +71,9 @@ function expandEnv(value: unknown): unknown {
     return value.replace(/\$\{([A-Z0-9_]+)\}/gi, (_, varName: string) => {
       const v = process.env[varName];
       if (v === undefined) {
-        throw new ConfigError(`Environment variable ${varName} is not set but is referenced in config.`);
+        throw new ConfigError(
+          `Environment variable ${varName} is not set but is referenced in config.`,
+        );
       }
       return v;
     });
@@ -118,7 +122,7 @@ export function loadProjectConfig(configPath: string): ProjectConfig {
     docker: {
       ...cfg.docker,
       dockerfile: dockerfileAbs,
-      build_context: buildContextAbs
-    }
+      build_context: buildContextAbs,
+    },
   };
 }

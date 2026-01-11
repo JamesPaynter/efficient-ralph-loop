@@ -63,7 +63,7 @@ Add this to your **target repo** `.gitignore`:
 Codex SDK uses `CODEX_API_KEY`.
 
 ```bash
-export CODEX_API_KEY=... 
+export CODEX_API_KEY=...
 ```
 
 ### 6) Plan (creates `.tasks/`)
@@ -83,6 +83,9 @@ task-orchestrator run --project my-project
 ## Development
 
 - Node 20+
+- `npm run lint` — ESLint (TypeScript + Node)
+- `npm run format:check` — verify Prettier formatting
+- `npm run format` — apply Prettier formatting
 - `npm run build` — compile TypeScript to `dist/`
 - `npm run typecheck` — strict type checking without emit
 - `npm test` — run the Node test runner

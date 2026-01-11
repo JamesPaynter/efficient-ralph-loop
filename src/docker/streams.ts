@@ -1,9 +1,13 @@
-import type Docker from "dockerode";
 import { PassThrough } from "node:stream";
+
+import type Docker from "dockerode";
 
 export type StreamLineHandler = (line: string, stream: "stdout" | "stderr") => void;
 
-export async function attachLineStream(container: Docker.Container, onLine: StreamLineHandler): Promise<() => void> {
+export async function attachLineStream(
+  container: Docker.Container,
+  onLine: StreamLineHandler,
+): Promise<() => void> {
   const raw = await container.attach({ stream: true, stdout: true, stderr: true });
 
   const stdout = new PassThrough();
