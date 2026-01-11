@@ -67,10 +67,13 @@ Add this to your **target repo** `.gitignore`:
 
 ### 5) Set credentials
 
-Codex SDK uses `CODEX_API_KEY`.
+Codex SDK uses `CODEX_API_KEY`. If you switch the planner or validators to OpenAI,
+set `OPENAI_API_KEY` instead.
 
 ```bash
 export CODEX_API_KEY=...
+# or
+export OPENAI_API_KEY=...
 ```
 
 ### 6) Plan (creates `.tasks/`)
@@ -80,6 +83,9 @@ task-orchestrator plan \
   --project my-project \
   --input docs/planning/002-implementation/implementation-plan.md
 ```
+
+- Add `--dry-run` to preview task ids without writing files.
+- Add `--output <dir>` to change where `.tasks/` are written (defaults to your repo `tasks_dir`).
 
 ### 7) Run
 

@@ -35,9 +35,18 @@ export async function planProject(
   });
 
   if (opts.dryRun) {
-    console.log(JSON.stringify(res, null, 2));
-  } else {
-    console.log(`Wrote ${res.tasks.length} tasks to ${outputDir}`);
+    const ids = res.tasks.map((t) => t.id).join(", ");
+    const summary =
+      res.tasks.length === 0
+        ? "Dry run: no tasks returned by planner."
+        : `Dry run: ${res.tasks.length} task(s) planned: ${ids}`;
+    console.log(summary);
+    return;
+  }
+
+  console.log(`Wrote ${res.tasks.length} task(s) to ${res.outputDir}`);
+  if (res.planIndexPath) {
+    console.log(`Plan index: ${res.planIndexPath}`);
   }
 
   log.log({ type: "plan.cli.complete", payload: { tasks: res.tasks.length } });

@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Implement `plan` to convert an implementation-plan.md into .tasks/ manifests and specs via LLM.
@@ -17,7 +17,7 @@ Implement `plan` to convert an implementation-plan.md into .tasks/ manifests and
 | file | change type | description |
 |---|---|---|
 | src/cli/plan.ts | modify | Read implementation plan, call planner, write .tasks outputs. |
-| src/core/planner.ts | add | Planner orchestration (prompt build, schema validation, error handling). |
+| src/core/planner.ts | modify | Planner orchestration (prompt build, schema validation, error handling). |
 | src/core/task-writer.ts | add | Write manifest.json + spec.md to .tasks/<id>-<name>/ |
 | src/core/task-manifest.ts | modify | Expose writer-friendly normalization for ids/names. |
 | README.md | modify | Document plan usage and required env vars. |
@@ -28,11 +28,11 @@ Implement `plan` to convert an implementation-plan.md into .tasks/ manifests and
 - Rollback: Allow `--dry-run` and `--output` to write elsewhere; require human review before run.
 
 ## Implementation Checklist
-- [ ] Implement plan CLI flags: --input, --output, --dry-run, --project.
-- [ ] Load implementation plan markdown and project resources from config.
-- [ ] Build planner prompt from template and call LLM with output schema.
-- [ ] Validate tasks: unique ids, kebab-case names, locks map to resources, verify commands present.
-- [ ] Write files: .tasks/<id>-<name>/manifest.json and spec.md; also write a manifest index if useful.
+- [x] Implement plan CLI flags: --input, --output, --dry-run, --project.
+- [x] Load implementation plan markdown and project resources from config.
+- [x] Build planner prompt from template and call LLM with output schema.
+- [x] Validate tasks: unique ids, kebab-case names, locks map to resources, verify commands present.
+- [x] Write files: .tasks/<id>-<name>/manifest.json and spec.md; also write a manifest index if useful.
 
 ## Verification
 - `Manual: run plan in --dry-run and ensure it prints the task count and ids.`

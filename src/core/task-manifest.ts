@@ -1,5 +1,7 @@
 import { z, type ZodIssue } from "zod";
 
+import { slugify } from "./utils.js";
+
 export const LocksSchema = z
   .object({
     reads: z.array(z.string()).default([]),
@@ -45,7 +47,14 @@ export type TaskSpec = {
   slug: string;
 };
 
+export type TaskWithSpec = TaskManifest & { spec: string };
+
 export type NormalizedLocks = {
+  reads: string[];
+  writes: string[];
+};
+
+export type NormalizedFiles = {
   reads: string[];
   writes: string[];
 };
@@ -89,9 +98,17 @@ export function validateResourceLocks(manifest: TaskManifest, resources: string[
 }
 
 export function normalizeLocks(locks?: TaskManifest["locks"]): NormalizedLocks {
-  const reads = Array.from(new Set(locks?.reads ?? [])).sort();
-  const writes = Array.from(new Set(locks?.writes ?? [])).sort();
-  return { reads, writes };
+  return {
+    reads: normalizeStringList(locks?.reads),
+    writes: normalizeStringList(locks?.writes),
+  };
+}
+
+export function normalizeFiles(files?: TaskManifest["files"]): NormalizedFiles {
+  return {
+    reads: normalizeStringList(files?.reads),
+    writes: normalizeStringList(files?.writes),
+  };
 }
 
 export function locksConflict(a: NormalizedLocks, b: NormalizedLocks): boolean {
@@ -110,4 +127,48 @@ export function locksConflict(a: NormalizedLocks, b: NormalizedLocks): boolean {
   }
 
   return false;
+}
+
+export function normalizeTaskId(id: string): string {
+  return id.trim();
+}
+
+export function normalizeTaskName(name: string): string {
+  return name.trim();
+}
+
+export function buildTaskSlug(name: string): string {
+  const slug = slugify(normalizeTaskName(name));
+  return slug.length > 0 ? slug : "task";
+}
+
+export function buildTaskDirName(task: Pick<TaskManifest, "id" | "name">): string {
+  return `${normalizeTaskId(task.id)}-${buildTaskSlug(task.name)}`;
+}
+
+export function normalizeTaskManifest(manifest: TaskManifest): TaskManifest {
+  const dependencies = normalizeStringList(manifest.dependencies);
+  const locks = normalizeLocks(manifest.locks);
+  const files = normalizeFiles(manifest.files);
+  const affectedTests = normalizeStringList(manifest.affected_tests);
+
+  const doctor = manifest.verify.doctor.trim();
+  const fast = manifest.verify.fast?.trim();
+
+  return {
+    ...manifest,
+    id: normalizeTaskId(manifest.id),
+    name: normalizeTaskName(manifest.name),
+    dependencies: dependencies.length > 0 ? dependencies : undefined,
+    locks,
+    files,
+    affected_tests: affectedTests,
+    verify: fast ? { doctor, fast } : { doctor },
+  };
+}
+
+function normalizeStringList(values?: string[]): string[] {
+  return Array.from(
+    new Set((values ?? []).map((v) => v.trim()).filter((v) => v.length > 0)),
+  ).sort();
 }

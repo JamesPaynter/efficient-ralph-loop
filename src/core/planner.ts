@@ -3,29 +3,38 @@ import path from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { execa } from "execa";
 import fse from "fs-extra";
+import { z } from "zod";
 
-import type { ProjectConfig } from "./config.js";
+import type { PlannerConfig, ProjectConfig, ResourceConfig } from "./config.js";
 import { JsonlLogger } from "./logger.js";
-import { orchestratorHome } from "./paths.js";
+import { plannerHomeDir } from "./paths.js";
 import { renderPromptTemplate } from "./prompts.js";
-import { slugify, ensureDir, isoNow } from "./utils.js";
+import {
+  TaskManifestSchema,
+  formatManifestIssues,
+  normalizeTaskManifest,
+  type TaskWithSpec,
+  validateResourceLocks,
+} from "./task-manifest.js";
+import { writeTasksToDirectory } from "./task-writer.js";
+import { ensureDir, readTextFile } from "./utils.js";
+import { OpenAiClient } from "../llm/openai.js";
+import {
+  LlmClient,
+  LlmError,
+  type LlmCompletionOptions,
+  type LlmCompletionResult,
+} from "../llm/client.js";
 
-export type PlannedTask = {
-  id: string;
-  name: string;
-  description: string;
-  estimated_minutes: number;
-  dependencies?: string[];
-  locks: { reads: string[]; writes: string[] };
-  files: { reads: string[]; writes: string[] };
-  affected_tests: string[];
-  verify: { doctor: string; fast?: string };
-  spec: string;
+export type PlanResult = {
+  tasks: TaskWithSpec[];
+  outputDir: string;
+  planIndexPath?: string;
 };
 
-export type PlanResult = { tasks: PlannedTask[] };
+type PlannerOutput = z.infer<typeof PlannerResponseSchema>;
 
-const PlannerOutputSchema = {
+const PlannerOutputJsonSchema = {
   type: "object",
   properties: {
     tasks: {
@@ -87,6 +96,12 @@ const PlannerOutputSchema = {
   additionalProperties: false,
 } as const;
 
+const PlannerResponseSchema = z.object({
+  tasks: z
+    .array(TaskManifestSchema.extend({ spec: z.string().min(1) }))
+    .min(1, "Planner must return at least one task."),
+});
+
 export async function planFromImplementationPlan(args: {
   projectName: string;
   config: ProjectConfig;
@@ -95,108 +110,239 @@ export async function planFromImplementationPlan(args: {
   dryRun?: boolean;
   log?: JsonlLogger;
 }): Promise<PlanResult> {
-  const { projectName, config, inputPath, outputDir, dryRun } = args;
-
+  const { projectName, config, outputDir, dryRun } = args;
   const repoPath = config.repo_path;
-  const inputAbs = path.isAbsolute(inputPath) ? inputPath : path.join(repoPath, inputPath);
-  const implementationPlan = await fse.readFile(inputAbs, "utf8");
+  const outputDirAbs = path.isAbsolute(outputDir) ? outputDir : path.join(repoPath, outputDir);
+  const inputAbs = path.isAbsolute(args.inputPath)
+    ? args.inputPath
+    : path.join(repoPath, args.inputPath);
+  const log = args.log;
 
-  // Codebase tree (tracked files only) for determinism.
-  const tree = await execa("git", ["ls-files"], { cwd: repoPath, stdio: "pipe" });
-  const codebaseTree = tree.stdout.trim();
+  try {
+    const implementationPlan = await readImplementationPlan(inputAbs);
+    const codebaseTree = await readCodebaseTree(repoPath);
+    const resourcesBlock = formatResources(config.resources);
 
-  const resourcesBlock = config.resources
-    .map((r) => {
-      const desc = r.description ? `: ${r.description}` : "";
-      return `- **${r.name}**${desc}\n  - Paths: ${r.paths.join(", ")}`;
-    })
-    .join("\n");
+    const prompt = await renderPromptTemplate("planner", {
+      project_name: projectName,
+      repo_path: repoPath,
+      resources: resourcesBlock,
+      doctor_command: config.doctor,
+      implementation_plan: implementationPlan,
+      codebase_tree: codebaseTree,
+    });
 
-  const prompt = await renderPromptTemplate("planner", {
-    project_name: projectName,
-    repo_path: repoPath,
-    resources: resourcesBlock,
-    doctor_command: config.doctor,
-    implementation_plan: implementationPlan,
-    codebase_tree: codebaseTree,
+    log?.log({ type: "planner.start", payload: { project: projectName, input: inputAbs } });
+
+    const client = createPlannerClient(config.planner, projectName, repoPath);
+    const completion = await client.complete<PlannerOutput>(prompt, {
+      schema: PlannerOutputJsonSchema,
+      temperature: config.planner.temperature,
+      timeoutMs: secondsToMs(config.planner.timeout_seconds),
+    });
+
+    log?.log({ type: "planner.llm.complete", payload: { finish_reason: completion.finishReason } });
+
+    const tasks = parsePlannerOutput(completion, config.resources.map((r) => r.name));
+
+    log?.log({ type: "planner.validate.complete", payload: { task_count: tasks.length } });
+
+    if (dryRun) {
+      return { tasks, outputDir: outputDirAbs };
+    }
+
+    const writeResult = await writeTasksToDirectory({
+      tasks,
+      outputDir: outputDirAbs,
+      project: projectName,
+      inputPath: inputAbs,
+    });
+
+    log?.log({
+      type: "planner.write.complete",
+      payload: { task_count: tasks.length, output_dir: outputDirAbs },
+    });
+
+    return {
+      tasks,
+      outputDir: outputDirAbs,
+      planIndexPath: writeResult.planIndexPath,
+    };
+  } catch (err) {
+    log?.log({ type: "planner.error", payload: { message: formatError(err) } });
+    throw err;
+  }
+}
+
+function parsePlannerOutput(
+  completion: LlmCompletionResult<PlannerOutput>,
+  resources: string[],
+): TaskWithSpec[] {
+  const raw = completion.parsed ?? parseJson(completion.text);
+  const parsed = PlannerResponseSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    const detail = formatManifestIssues(parsed.error.issues).map((i) => `- ${i}`).join("\n");
+    throw new Error(`Planner output failed schema validation:\n${detail}`);
+  }
+
+  const normalized = parsed.data.tasks.map((task) => {
+    const { spec, ...manifestFields } = task;
+    const manifest = normalizeTaskManifest(manifestFields);
+    return { ...manifest, spec: spec.trim() };
   });
 
-  const log = args.log;
-  log?.log({ type: "planner.start", payload: { project: projectName, input: inputAbs } });
+  const validationIssues = validatePlannerTasks(normalized, resources);
+  if (validationIssues.length > 0) {
+    const detail = validationIssues.map((i) => `- ${i}`).join("\n");
+    throw new Error(`Planner output failed validation:\n${detail}`);
+  }
 
-  // Planner runs via Codex SDK in read-only mode.
-  const codexHome = path.join(orchestratorHome(), "codex", projectName, "planner");
-  await ensureDir(codexHome);
-  await writePlannerCodexConfig(path.join(codexHome, "config.toml"), config.planner.model);
+  return normalized;
+}
 
-  const codex = new Codex({ env: { CODEX_HOME: codexHome } });
-  const thread = codex.startThread({ workingDirectory: repoPath });
+function validatePlannerTasks(tasks: TaskWithSpec[], resources: string[]): string[] {
+  const issues: string[] = [];
+  const seenIds = new Set<string>();
+  const allIds = new Set(tasks.map((t) => t.id));
 
-  const result = await thread.run(prompt, { outputSchema: PlannerOutputSchema as any });
+  for (const task of tasks) {
+    const taskIssues: string[] = [];
 
-  let parsed: PlanResult;
+    if (seenIds.has(task.id)) {
+      taskIssues.push(`duplicate id "${task.id}"`);
+    } else {
+      seenIds.add(task.id);
+    }
+
+    if (!isKebabCase(task.name)) {
+      taskIssues.push(`name must be kebab-case (got "${task.name}")`);
+    }
+
+    const lockIssues = validateResourceLocks(task, resources);
+    if (lockIssues.length > 0) taskIssues.push(...lockIssues);
+
+    if (!task.verify.doctor.trim()) {
+      taskIssues.push("verify.doctor is required");
+    }
+
+    const deps = task.dependencies ?? [];
+    const missingDeps = deps.filter((dep) => !allIds.has(dep));
+    if (missingDeps.length > 0) {
+      taskIssues.push(`dependencies reference unknown ids: ${missingDeps.join(", ")}`);
+    }
+    if (deps.includes(task.id)) {
+      taskIssues.push("dependencies cannot include the task itself");
+    }
+
+    if (taskIssues.length > 0) {
+      issues.push(`Task ${task.id}: ${taskIssues.join("; ")}`);
+    }
+  }
+
+  return issues;
+}
+
+function isKebabCase(value: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function formatResources(resources: ResourceConfig[]): string {
+  return resources
+    .map((resource) => {
+      const desc = resource.description ? `: ${resource.description}` : "";
+      return `- **${resource.name}**${desc}\n  - Paths: ${resource.paths.join(", ")}`;
+    })
+    .join("\n");
+}
+
+async function readImplementationPlan(inputPath: string): Promise<string> {
+  const exists = await fse.pathExists(inputPath);
+  if (!exists) {
+    throw new Error(`Implementation plan not found at ${inputPath}`);
+  }
+  return readTextFile(inputPath);
+}
+
+async function readCodebaseTree(repoPath: string): Promise<string> {
   try {
-    parsed = JSON.parse(result.finalResponse) as PlanResult;
-  } catch (_err) {
-    throw new Error(`Planner returned non-JSON output. Raw:\n${result.finalResponse}`);
+    const tree = await execa("git", ["ls-files"], { cwd: repoPath, stdio: "pipe" });
+    return tree.stdout.trim();
+  } catch (err) {
+    throw new Error(`Failed to read git tree for ${repoPath}: ${formatError(err)}`);
+  }
+}
+
+function parseJson<T>(raw: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new LlmError("Planner returned non-JSON output.", err);
+  }
+}
+
+function secondsToMs(value?: number): number | undefined {
+  if (value === undefined) return undefined;
+  return value * 1000;
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function createPlannerClient(
+  cfg: PlannerConfig,
+  projectName: string,
+  repoPath: string,
+): LlmClient {
+  if (cfg.provider === "openai") {
+    return new OpenAiClient({
+      model: cfg.model,
+      defaultTemperature: cfg.temperature,
+      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
+    });
   }
 
-  if (!parsed.tasks || !Array.isArray(parsed.tasks)) {
-    throw new Error(`Planner output did not include tasks[]`);
+  if (cfg.provider === "codex") {
+    const codexHome = plannerHomeDir(projectName);
+    return new CodexPlannerClient({
+      model: cfg.model,
+      codexHome,
+      workingDirectory: repoPath,
+    });
   }
 
-  log?.log({ type: "planner.complete", payload: { task_count: parsed.tasks.length } });
+  throw new Error(`Unsupported planner provider: ${cfg.provider}`);
+}
 
-  if (dryRun) {
-    return parsed;
+class CodexPlannerClient implements LlmClient {
+  private readonly model: string;
+  private readonly codexHome: string;
+  private readonly workingDirectory: string;
+
+  constructor(args: { model: string; codexHome: string; workingDirectory: string }) {
+    this.model = args.model;
+    this.codexHome = args.codexHome;
+    this.workingDirectory = args.workingDirectory;
   }
 
-  // Write tasks to disk.
-  await ensureDir(outputDir);
-  for (const t of parsed.tasks) {
-    const dirName = `${t.id}-${slugify(t.name)}`;
-    const taskDir = path.join(outputDir, dirName);
-    await ensureDir(taskDir);
+  async complete<TParsed = unknown>(
+    prompt: string,
+    options: LlmCompletionOptions = {},
+  ): Promise<LlmCompletionResult<TParsed>> {
+    await ensureDir(this.codexHome);
+    await writePlannerCodexConfig(path.join(this.codexHome, "config.toml"), this.model);
 
-    const manifest = {
-      id: t.id,
-      name: t.name,
-      description: t.description,
-      estimated_minutes: t.estimated_minutes,
-      dependencies: t.dependencies,
-      locks: t.locks,
-      files: t.files,
-      affected_tests: t.affected_tests,
-      verify: t.verify,
-    };
+    const codex = new Codex({ env: { CODEX_HOME: this.codexHome } });
+    const thread = codex.startThread({ workingDirectory: this.workingDirectory });
 
-    await fse.writeFile(
-      path.join(taskDir, "manifest.json"),
-      JSON.stringify(manifest, null, 2) + "\n",
-      "utf8",
-    );
-    await fse.writeFile(path.join(taskDir, "spec.md"), t.spec.trim() + "\n", "utf8");
+    const result = await thread.run(prompt, { outputSchema: options.schema as any });
+    const text = result.finalResponse ?? "";
+    const parsed = options.schema ? parseJson<TParsed>(text) : undefined;
+
+    return { text, parsed, finishReason: null };
   }
-
-  // Also write a top-level plan index.
-  await fse.writeFile(
-    path.join(outputDir, "_plan.json"),
-    JSON.stringify(
-      {
-        generated_at: isoNow(),
-        project: projectName,
-        input: inputAbs,
-        task_count: parsed.tasks.length,
-      },
-      null,
-      2,
-    ) + "\n",
-    "utf8",
-  );
-
-  log?.log({ type: "planner.write.complete", payload: { output_dir: outputDir } });
-
-  return parsed;
 }
 
 async function writePlannerCodexConfig(filePath: string, model: string): Promise<void> {
@@ -207,6 +353,6 @@ async function writePlannerCodexConfig(filePath: string, model: string): Promise
     `sandbox_mode = "read-only"`,
     "",
   ].join("\n");
-  await fse.ensureDir(path.dirname(filePath));
+  await ensureDir(path.dirname(filePath));
   await fse.writeFile(filePath, content, "utf8");
 }
