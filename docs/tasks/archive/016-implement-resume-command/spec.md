@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Resume the latest (or specified) run by reloading state and restarting pending work (Level 1).
@@ -27,14 +27,14 @@ Resume the latest (or specified) run by reloading state and restarting pending w
 - Rollback: Disable resume; require fresh run id each time.
 
 ## Implementation Checklist
-- [ ] Implement `resume --run-id <id>` and default to latest.
-- [ ] Load state and reset any running tasks to pending (MVP).
-- [ ] Re-run executor using existing directories (logs/state/workspaces).
-- [ ] Log resume actions for traceability.
+- [x] Implement `resume --run-id <id>` and default to latest.
+- [x] Load state and reset any running tasks to pending (MVP).
+- [x] Re-run executor using existing directories (logs/state/workspaces).
+- [x] Log resume actions for traceability.
 
 ## Verification
-- `Manual: create a state file with a task in status=running and confirm resume resets it to pending.`
 - `npm test`
+- `npm run build`
 
 ## Dependencies
 ### Blocks

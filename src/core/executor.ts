@@ -19,7 +19,7 @@ import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
 
 import type { ProjectConfig } from "./config.js";
-import { JsonlLogger, logOrchestratorEvent } from "./logger.js";
+import { JsonlLogger, logOrchestratorEvent, logRunResume, logTaskReset } from "./logger.js";
 import { loadTaskSpecs } from "./task-loader.js";
 import type { TaskSpec } from "./task-manifest.js";
 import {
@@ -31,7 +31,7 @@ import {
   workerCodexHomeDir,
 } from "./paths.js";
 import { buildGreedyBatch, topologicalReady, type BatchPlan } from "./scheduler.js";
-import { StateStore } from "./state-store.js";
+import { StateStore, findLatestRunId } from "./state-store.js";
 import {
   completeBatch,
   createRunState,
@@ -46,6 +46,7 @@ import { prepareTaskWorkspace } from "./workspaces.js";
 
 export type RunOptions = {
   runId?: string;
+  resume?: boolean;
   tasks?: string[]; // limit to IDs
   maxParallel?: number;
   dryRun?: boolean;
@@ -66,7 +67,18 @@ export async function runProject(
   config: ProjectConfig,
   opts: RunOptions,
 ): Promise<RunResult> {
-  const runId = opts.runId ?? defaultRunId();
+  const isResume = opts.resume ?? false;
+  let runId: string;
+
+  if (isResume) {
+    const resolvedRunId = opts.runId ?? (await findLatestRunId(projectName));
+    if (!resolvedRunId) {
+      throw new Error(`No runs found to resume for project ${projectName}.`);
+    }
+    runId = resolvedRunId;
+  } else {
+    runId = opts.runId ?? defaultRunId();
+  }
   const maxParallel = opts.maxParallel ?? config.max_parallel;
   const cleanupOnSuccess = opts.cleanupOnSuccess ?? false;
   const plannedBatches: BatchPlanEntry[] = [];
@@ -151,26 +163,50 @@ export async function runProject(
 
   // Create or resume run state
   let state: RunState;
-  if (await stateStore.exists()) {
+  const stateExists = await stateStore.exists();
+  if (stateExists) {
     state = await stateStore.load();
-    logOrchestratorEvent(orchLog, "run.resume", { status: state.status });
-    // If a previous run was marked complete/failed, we keep it immutable unless the user
-    // explicitly changes the run ID.
+
+    const runResumeReason = isResume ? "resume_command" : "existing_state";
     if (state.status !== "running") {
+      logRunResume(orchLog, { status: state.status, reason: runResumeReason });
       logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_not_running" });
       orchLog.close();
       return { runId, state, plan: plannedBatches };
     }
 
-    // Level 1 recovery: rerun any tasks that were in-flight.
-    resetRunningTasks(state);
+    const runningTasks = Object.entries(state.tasks)
+      .filter(([, t]) => t.status === "running")
+      .map(([id]) => id);
+
+    const resetReason = "Resuming run: resetting in-flight tasks";
+    if (runningTasks.length > 0) {
+      resetRunningTasks(state, resetReason);
+      for (const taskId of runningTasks) {
+        logTaskReset(orchLog, taskId, resetReason);
+      }
+    }
+
+    // Ensure new tasks found in the manifest are tracked for this run.
     for (const t of tasks) {
       if (!state.tasks[t.manifest.id]) {
         state.tasks[t.manifest.id] = { status: "pending", attempts: 0 };
       }
     }
     await stateStore.save(state);
+
+    logRunResume(orchLog, {
+      status: state.status,
+      reason: runResumeReason,
+      resetTasks: runningTasks.length,
+    });
   } else {
+    if (isResume) {
+      logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_missing" });
+      orchLog.close();
+      throw new Error(`Cannot resume run ${runId}: state file not found.`);
+    }
+
     state = createRunState({
       runId,
       project: projectName,

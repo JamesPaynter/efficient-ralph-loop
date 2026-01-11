@@ -117,6 +117,21 @@ export function logOrchestratorEvent(
   logger.log(event);
 }
 
+export function logRunResume(
+  logger: JsonlLogger,
+  details: { status: string; reason?: string; resetTasks?: number },
+): void {
+  const payload: JsonObject = { status: details.status };
+  if (details.reason) payload.reason = details.reason;
+  if (details.resetTasks !== undefined) payload.reset_tasks = details.resetTasks;
+
+  logOrchestratorEvent(logger, "run.resume", payload);
+}
+
+export function logTaskReset(logger: JsonlLogger, taskId: string, reason: string): void {
+  logOrchestratorEvent(logger, "task.reset", { taskId, reason });
+}
+
 export function logJsonLineOrRaw(
   logger: JsonlLogger,
   line: string,

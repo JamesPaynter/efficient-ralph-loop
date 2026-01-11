@@ -12,7 +12,13 @@ import {
   resetRunningTasks,
   startBatch,
 } from "./state.js";
-import { loadRunState, saveRunState, StateStore } from "./state-store.js";
+import {
+  findLatestRunId,
+  loadRunState,
+  loadRunStateForProject,
+  saveRunState,
+  StateStore,
+} from "./state-store.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -150,6 +156,49 @@ describe("state store", () => {
       expect(reloaded.batches[0].status).toBe("failed");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("finds the latest run id and loads matching state", async () => {
+    const originalHome = process.env.TASK_ORCHESTRATOR_HOME;
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-home-"));
+    process.env.TASK_ORCHESTRATOR_HOME = tmpHome;
+
+    try {
+      const project = "demo-project";
+      const first = new StateStore(project, "001");
+      const second = new StateStore(project, "002");
+
+      const baseState = {
+        project,
+        repoPath: "/repo",
+        mainBranch: "main",
+        taskIds: ["alpha"],
+      };
+
+      await first.save(createRunState({ ...baseState, runId: "001" }));
+      fs.utimesSync(
+        first.statePath,
+        new Date("2024-01-01T00:00:00Z"),
+        new Date("2024-01-01T00:00:00Z"),
+      );
+
+      await second.save(createRunState({ ...baseState, runId: "002" }));
+      fs.utimesSync(
+        second.statePath,
+        new Date("2024-02-01T00:00:00Z"),
+        new Date("2024-02-01T00:00:00Z"),
+      );
+
+      const latest = await findLatestRunId(project);
+      expect(latest).toBe("002");
+
+      const resolved = await loadRunStateForProject(project);
+      expect(resolved?.runId).toBe("002");
+      expect(resolved?.state.run_id).toBe("002");
+    } finally {
+      process.env.TASK_ORCHESTRATOR_HOME = originalHome;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
 });

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import fse from "fs-extra";
 
-import { runStatePath, runStateTempPath } from "./paths.js";
+import { runStateDir, runStatePath, runStateTempPath } from "./paths.js";
 import { RunStateSchema, resetRunningTasks, type RunState } from "./state.js";
 import { isoNow } from "./utils.js";
 
@@ -43,6 +43,39 @@ export class StateStore {
     const tempName = path.basename(tempBase);
     return path.join(path.dirname(this.statePathValue), `${tempName}.${randomUUID()}`);
   }
+}
+
+export async function findLatestRunId(projectName: string): Promise<string | null> {
+  const dir = runStateDir(projectName);
+  if (!(await fse.pathExists(dir))) return null;
+
+  const files = await fse.readdir(dir);
+  const runFiles = files.filter((f) => f.startsWith("run-") && f.endsWith(".json"));
+  if (runFiles.length === 0) return null;
+
+  const withMtime = await Promise.all(
+    runFiles.map(async (file) => {
+      const stat = await fse.stat(path.join(dir, file));
+      return { file, mtime: stat.mtimeMs };
+    }),
+  );
+
+  withMtime.sort((a, b) => b.mtime - a.mtime);
+  return normalizeRunId(withMtime[0].file);
+}
+
+export async function loadRunStateForProject(
+  projectName: string,
+  runId?: string,
+): Promise<{ runId: string; state: RunState } | null> {
+  const resolvedRunId = runId ?? (await findLatestRunId(projectName));
+  if (!resolvedRunId) return null;
+
+  const store = new StateStore(projectName, resolvedRunId);
+  if (!(await store.exists())) return null;
+
+  const state = await store.load();
+  return { runId: resolvedRunId, state };
 }
 
 export async function loadRunState(statePath: string): Promise<RunState> {
@@ -103,4 +136,8 @@ async function writeStateFile(
     await fse.remove(tmpPath).catch(() => undefined);
     throw err;
   }
+}
+
+function normalizeRunId(fileName: string): string {
+  return fileName.replace(/^run-/, "").replace(/\.json$/, "");
 }
