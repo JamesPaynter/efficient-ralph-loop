@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Implement the worker process that runs Codex, executes retries, and commits on doctor pass.
@@ -28,11 +28,11 @@ Implement the worker process that runs Codex, executes retries, and commits on d
 - Rollback: Disable retries (max_retries=1) and keep changes unmerged until reviewed.
 
 ## Implementation Checklist
-- [ ] Implement environment variable contract (TASK_ID, DOCTOR_CMD, MAX_RETRIES, etc.).
-- [ ] Load spec.md and manifest.json from mounted task directory (configurable path).
-- [ ] Run Codex streamed execution and emit all events with timestamps to stdout.
-- [ ] Run doctor command; on pass, git add/commit; on fail, write doctor log file and retry with error context.
-- [ ] Exit 0 on success; exit 1 on max retries exceeded.
+- [x] Implement environment variable contract (TASK_ID, DOCTOR_CMD, MAX_RETRIES, etc.).
+- [x] Load spec.md and manifest.json from mounted task directory (configurable path).
+- [x] Run Codex streamed execution and emit all events with timestamps to stdout.
+- [x] Run doctor command; on pass, git add/commit; on fail, write doctor log file and retry with error context.
+- [x] Exit 0 on success; exit 1 on max retries exceeded.
 
 ## Verification
 - `npm run build`

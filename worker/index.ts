@@ -1,239 +1,223 @@
-import fs from "node:fs";
 import path from "node:path";
 
-import { Codex } from "@openai/codex-sdk";
-import { execa, execaCommand } from "execa";
+import { Command } from "commander";
 
-type Json = Record<string, unknown>;
+import { runWorker, type WorkerConfig } from "./loop.js";
+import { createStdoutLogger, toErrorMessage } from "./logging.js";
 
-function isoNow(): string {
-  return new Date().toISOString();
-}
+// =============================================================================
+// CLI
+// =============================================================================
 
-function log(event: Json): void {
-  process.stdout.write(JSON.stringify({ ts: isoNow(), ...event }) + "\n");
-}
+type CliOptions = {
+  taskId?: string;
+  taskSlug?: string;
+  taskBranch?: string;
+  taskDir?: string;
+  manifest?: string;
+  spec?: string;
+  doctor?: string;
+  maxRetries?: number;
+  doctorTimeout?: number;
+  bootstrap?: string[];
+  runLogsDir?: string;
+  codexHome?: string;
+  codexModel?: string;
+  workdir?: string;
+};
 
-function envOrThrow(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
-}
+export async function main(argv: string[]): Promise<void> {
+  const program = new Command();
 
-async function main(): Promise<void> {
-  const taskId = envOrThrow("TASK_ID");
-  const specPath = envOrThrow("TASK_SPEC_PATH");
-  const manifestPath = envOrThrow("TASK_MANIFEST_PATH");
-  const doctorCmd = envOrThrow("DOCTOR_CMD");
-  const maxRetries = parseInt(process.env.MAX_RETRIES || "20", 10);
-  const doctorTimeoutSeconds = process.env.DOCTOR_TIMEOUT
-    ? parseInt(process.env.DOCTOR_TIMEOUT, 10)
-    : undefined;
+  program
+    .name("task-worker")
+    .description("Codex worker loop for a single task")
+    .option("--task-id <id>", "Task ID (env: TASK_ID)")
+    .option("--task-slug <slug>", "Task slug (env: TASK_SLUG)")
+    .option("--task-branch <name>", "Task branch (env: TASK_BRANCH)")
+    .option(
+      "--task-dir <path>",
+      "Directory containing manifest.json and spec.md (env: TASK_DIR; overrides defaults when spec/manifest paths are not provided)",
+    )
+    .option("--manifest <path>", "Path to manifest.json (env: TASK_MANIFEST_PATH)")
+    .option("--spec <path>", "Path to spec.md (env: TASK_SPEC_PATH)")
+    .option("--doctor <cmd>", "Doctor command to run (env: DOCTOR_CMD)")
+    .option(
+      "--max-retries <n>",
+      "Maximum Codex attempts before failing (env: MAX_RETRIES, default 20)",
+      (v) => parseInt(v, 10),
+    )
+    .option(
+      "--doctor-timeout <seconds>",
+      "Doctor timeout in seconds (env: DOCTOR_TIMEOUT)",
+      (v) => parseInt(v, 10),
+    )
+    .option("--bootstrap <cmd...>", "Bootstrap commands to run before Codex (env: BOOTSTRAP_CMDS)")
+    .option(
+      "--run-logs-dir <path>",
+      "Directory for doctor/bootstrap logs (env: RUN_LOGS_DIR, default: /run-logs)",
+    )
+    .option(
+      "--codex-home <path>",
+      "CODEX_HOME path for Codex SDK (env: CODEX_HOME, default: /codex-home)",
+    )
+    .option("--codex-model <name>", "Model override for Codex (env: CODEX_MODEL)")
+    .option("--workdir <path>", "Working directory for commands (default: current directory)")
+    .action(async (opts: CliOptions) => {
+      let config: WorkerConfig;
+      try {
+        config = buildConfig(opts);
+      } catch (err) {
+        const logger = createStdoutLogger();
+        logger.log({ type: "worker.fatal", payload: { error: toErrorMessage(err) } });
+        process.exit(1);
+        return;
+      }
 
-  const bootstrapCmds = process.env.BOOTSTRAP_CMDS
-    ? (JSON.parse(process.env.BOOTSTRAP_CMDS) as string[])
-    : [];
+      const logger = createStdoutLogger({ taskId: config.taskId, taskSlug: config.taskSlug });
 
-  const spec = fs.readFileSync(specPath, "utf8");
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-    id: string;
-    name: string;
-  };
-
-  // Ensure git identity exists so commits don't fail.
-  await ensureGitIdentity();
-
-  // Optional bootstrap (install deps, etc.)
-  if (bootstrapCmds.length > 0) {
-    log({ type: "bootstrap.start", task_id: taskId, cmds: bootstrapCmds });
-    for (const cmd of bootstrapCmds) {
-      const res = await execaCommand(cmd, {
-        cwd: "/workspace",
-        shell: true,
-        reject: false,
-        stdio: "pipe",
-      });
-      log({ type: "bootstrap.cmd", task_id: taskId, cmd, exit_code: res.exitCode });
-      if (res.exitCode !== 0) {
-        writeRunLog(`bootstrap-${safeAttemptName(0)}.log`, `${res.stdout}\n${res.stderr}`);
-        log({ type: "bootstrap.fail", task_id: taskId, cmd, exit_code: res.exitCode });
+      try {
+        await runWorker(config, logger);
+      } catch (err) {
+        logger.log({ type: "worker.fatal", payload: { error: toErrorMessage(err) } });
         process.exit(1);
       }
-    }
-    log({ type: "bootstrap.complete", task_id: taskId });
-  }
-
-  const codexHome = process.env.CODEX_HOME || "/codex-home";
-  const codex = new Codex({ env: { CODEX_HOME: codexHome } });
-  const thread = codex.startThread({ workingDirectory: "/workspace" });
-
-  let lastDoctorOutput = "";
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    log({ type: "turn.start", task_id: taskId, attempt });
-
-    const prompt =
-      attempt === 1
-        ? buildInitialPrompt({ spec, manifestPath, manifest })
-        : buildRetryPrompt({ spec, lastDoctorOutput, attempt });
-
-    const { events } = await thread.runStreamed(prompt);
-    for await (const event of events) {
-      // Ensure we don't throw if event has circular refs (shouldn't).
-      log({ type: "codex.event", task_id: taskId, attempt, event });
-    }
-
-    log({ type: "turn.complete", task_id: taskId, attempt });
-
-    // Run doctor
-    log({ type: "doctor.start", task_id: taskId, attempt, command: doctorCmd });
-    const doctorRes = await execaCommand(doctorCmd, {
-      cwd: "/workspace",
-      shell: true,
-      reject: false,
-      timeout: doctorTimeoutSeconds ? doctorTimeoutSeconds * 1000 : undefined,
-      stdio: "pipe",
     });
 
-    const doctorOut = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
-    writeRunLog(`doctor-${safeAttemptName(attempt)}.log`, doctorOut + "\n");
+  await program.parseAsync(argv);
+}
 
-    if (doctorRes.exitCode === 0) {
-      log({ type: "doctor.pass", task_id: taskId, attempt });
-      await maybeCommit({ taskId, taskName: manifest.name });
-      log({ type: "task.complete", task_id: taskId, attempt });
-      process.exit(0);
+// =============================================================================
+// CONFIG PARSING
+// =============================================================================
+
+function buildConfig(opts: CliOptions): WorkerConfig {
+  const workingDirectory = resolvePath(opts.workdir ?? process.cwd(), process.cwd());
+
+  const taskId = (opts.taskId ?? envOrUndefined("TASK_ID"))?.trim();
+  if (!taskId) {
+    throw new Error("TASK_ID is required (set TASK_ID or pass --task-id).");
+  }
+
+  const taskSlug = (opts.taskSlug ?? envOrUndefined("TASK_SLUG"))?.trim() || undefined;
+  const taskBranch = (opts.taskBranch ?? envOrUndefined("TASK_BRANCH"))?.trim() || undefined;
+
+  const taskDir = resolveOptionalPath(opts.taskDir ?? envOrUndefined("TASK_DIR"), workingDirectory);
+
+  const manifestPath = resolveRequiredPath(
+    opts.manifest ??
+      envOrUndefined("TASK_MANIFEST_PATH") ??
+      (taskDir ? path.join(taskDir, "manifest.json") : undefined),
+    workingDirectory,
+    "TASK_MANIFEST_PATH or --manifest (or set --task-dir)",
+  );
+
+  const specPath = resolveRequiredPath(
+    opts.spec ?? envOrUndefined("TASK_SPEC_PATH") ?? (taskDir ? path.join(taskDir, "spec.md") : undefined),
+    workingDirectory,
+    "TASK_SPEC_PATH or --spec (or set --task-dir)",
+  );
+
+  const doctorCmd = (opts.doctor ?? envOrUndefined("DOCTOR_CMD"))?.trim();
+  if (!doctorCmd) {
+    throw new Error("DOCTOR_CMD is required (set DOCTOR_CMD or pass --doctor).");
+  }
+
+  const maxRetries =
+    getIntOption(opts.maxRetries, envOrUndefined("MAX_RETRIES"), "MAX_RETRIES") ?? 20;
+  if (maxRetries <= 0) {
+    throw new Error("MAX_RETRIES must be a positive integer.");
+  }
+
+  const doctorTimeoutSeconds = getIntOption(
+    opts.doctorTimeout,
+    envOrUndefined("DOCTOR_TIMEOUT"),
+    "DOCTOR_TIMEOUT",
+  );
+
+  const bootstrapCmds = opts.bootstrap ?? parseBootstrap(envOrUndefined("BOOTSTRAP_CMDS"));
+
+  const runLogsDir = resolvePath(
+    opts.runLogsDir ?? envOrUndefined("RUN_LOGS_DIR") ?? "/run-logs",
+    workingDirectory,
+  );
+  const codexHome = resolvePath(
+    opts.codexHome ?? envOrUndefined("CODEX_HOME") ?? "/codex-home",
+    workingDirectory,
+  );
+
+  return {
+    taskId,
+    taskSlug,
+    taskBranch,
+    specPath,
+    manifestPath,
+    doctorCmd,
+    doctorTimeoutSeconds,
+    maxRetries,
+    bootstrapCmds,
+    runLogsDir,
+    codexHome,
+    codexModel: opts.codexModel ?? envOrUndefined("CODEX_MODEL") ?? undefined,
+    workingDirectory,
+  };
+}
+
+function getIntOption(
+  cliValue: number | undefined,
+  envValue: string | undefined,
+  label: string,
+): number | undefined {
+  if (cliValue !== undefined) {
+    if (!Number.isInteger(cliValue)) {
+      throw new Error(`${label} must be an integer.`);
     }
-
-    lastDoctorOutput = doctorOut.slice(0, 12_000); // keep prompt bounded
-    log({
-      type: "doctor.fail",
-      task_id: taskId,
-      attempt,
-      exit_code: doctorRes.exitCode,
-      summary: lastDoctorOutput.slice(0, 500),
-    });
-
-    if (attempt < maxRetries) {
-      log({ type: "task.retry", task_id: taskId, next_attempt: attempt + 1 });
+    return cliValue;
+  }
+  if (envValue !== undefined) {
+    const parsed = Number.parseInt(envValue, 10);
+    if (!Number.isInteger(parsed)) {
+      throw new Error(`${label} must be an integer.`);
     }
+    return parsed;
   }
-
-  log({ type: "task.failed", task_id: taskId, attempts: maxRetries });
-  process.exit(1);
+  return undefined;
 }
 
-function buildInitialPrompt(args: { spec: string; manifestPath: string; manifest: any }): string {
-  const manifestJson = JSON.stringify(args.manifest, null, 2);
-  return `You are a coding agent working in a git repository.
-
-Task manifest (context):
-${manifestJson}
-
-Task spec:
-${args.spec}
-
-Rules:
-- Prefer test-driven development: add/adjust tests first, confirm they fail for the right reason, then implement.
-- Keep changes minimal and aligned with existing patterns.
-- Run the provided verification commands in the spec and ensure the doctor command passes.
-- If doctor fails, iterate until it passes.
-`;
-}
-
-function buildRetryPrompt(args: {
-  spec: string;
-  lastDoctorOutput: string;
-  attempt: number;
-}): string {
-  return `The doctor command failed on attempt ${args.attempt}.
-
-Doctor output:
-${args.lastDoctorOutput}
-
-Re-read the task spec and fix the issues. Then re-run doctor until it passes.
-
-Task spec:
-${args.spec}`;
-}
-
-async function ensureGitIdentity(): Promise<void> {
-  const nameRes = await execa("git", ["config", "--get", "user.name"], {
-    cwd: "/workspace",
-    reject: false,
-    stdio: "pipe",
-  });
-  if (nameRes.exitCode !== 0) {
-    await execa("git", ["config", "user.name", "task-orchestrator"], { cwd: "/workspace" });
-  }
-  const emailRes = await execa("git", ["config", "--get", "user.email"], {
-    cwd: "/workspace",
-    reject: false,
-    stdio: "pipe",
-  });
-  if (emailRes.exitCode !== 0) {
-    await execa("git", ["config", "user.email", "task-orchestrator@localhost"], {
-      cwd: "/workspace",
-    });
-  }
-}
-
-async function maybeCommit(args: { taskId: string; taskName: string }): Promise<void> {
-  // If nothing changed, don't fail.
-  const status = await execa("git", ["status", "--porcelain"], {
-    cwd: "/workspace",
-    stdio: "pipe",
-  });
-  if (status.stdout.trim().length === 0) {
-    log({ type: "git.commit.skip", task_id: args.taskId, reason: "no_changes" });
-    return;
-  }
-
-  await execa("git", ["add", "-A"], { cwd: "/workspace" });
-
-  const message = `[AUTO] ${args.taskId} ${args.taskName}\n\nTask: ${args.taskId}`;
-  const commit = await execa("git", ["commit", "-m", message], {
-    cwd: "/workspace",
-    reject: false,
-    stdio: "pipe",
-  });
-
-  if (commit.exitCode === 0) {
-    const sha = (
-      await execa("git", ["rev-parse", "HEAD"], { cwd: "/workspace", stdio: "pipe" })
-    ).stdout.trim();
-    log({ type: "git.commit", task_id: args.taskId, sha });
-    return;
-  }
-
-  // A non-zero commit exit can happen if git thinks there's nothing staged (race). Re-check.
-  const status2 = await execa("git", ["status", "--porcelain"], {
-    cwd: "/workspace",
-    stdio: "pipe",
-  });
-  if (status2.stdout.trim().length === 0) {
-    log({ type: "git.commit.skip", task_id: args.taskId, reason: "nothing_to_commit" });
-    return;
-  }
-
-  throw new Error(`git commit failed: ${commit.stderr || commit.stdout}`);
-}
-
-function writeRunLog(fileName: string, content: string): void {
-  const runLogsDir = process.env.RUN_LOGS_DIR || "/run-logs";
+function parseBootstrap(raw: string | undefined): string[] {
+  if (!raw) return [];
   try {
-    fs.mkdirSync(runLogsDir, { recursive: true });
-    fs.writeFileSync(path.join(runLogsDir, fileName), content, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+      return parsed as string[];
+    }
   } catch {
-    // best-effort
+    // handled below
   }
+  throw new Error("BOOTSTRAP_CMDS must be a JSON array of strings.");
 }
 
-function safeAttemptName(attempt: number): string {
-  return String(attempt).padStart(3, "0");
+function resolvePath(input: string, baseDir: string): string {
+  return path.isAbsolute(input) ? input : path.resolve(baseDir, input);
 }
 
-main().catch((err) => {
-  log({ type: "worker.fatal", error: String(err?.stack || err) });
-  process.exit(1);
-});
+function resolveOptionalPath(input: string | undefined, baseDir: string): string | undefined {
+  if (!input) return undefined;
+  return resolvePath(input, baseDir);
+}
+
+function resolveRequiredPath(input: string | undefined, baseDir: string, label: string): string {
+  if (!input) {
+    throw new Error(`Missing required path: ${label}.`);
+  }
+  return resolvePath(input, baseDir);
+}
+
+function envOrUndefined(name: string): string | undefined {
+  return process.env[name];
+}
+
+// Allow direct execution via `node dist/worker/index.js`
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void main(process.argv);
+}
