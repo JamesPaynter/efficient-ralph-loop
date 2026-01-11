@@ -106,11 +106,20 @@ export function buildCli(): Command {
     .requiredOption("--project <name>", "Project name")
     .option("--run-id <id>", "Run ID (default: latest)")
     .option("--keep-logs", "Do not delete logs", false)
+    .option("--dry-run", "Show cleanup targets without deleting", false)
+    .option("--force", "Do not prompt before deleting", false)
+    .option("--no-containers", "Skip Docker container cleanup", false)
     .action(async (opts) => {
       const globals = program.opts();
       const configPath = globals.config ?? projectConfigPath(opts.project);
       const cfg = loadProjectConfig(configPath);
-      await cleanCommand(opts.project, cfg, { runId: opts.runId, keepLogs: opts.keepLogs });
+      await cleanCommand(opts.project, cfg, {
+        runId: opts.runId,
+        keepLogs: opts.keepLogs,
+        dryRun: opts.dryRun,
+        force: opts.force,
+        removeContainers: opts.containers,
+      });
     });
 
   return program;

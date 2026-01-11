@@ -1,65 +1,119 @@
-import fs from "node:fs";
-
-import fse from "fs-extra";
+import { stdin as input, stdout as output } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 import type { ProjectConfig } from "../core/config.js";
-import { runLogsDir, runStateDir, runWorkspaceDir } from "../core/paths.js";
-import { dockerClient } from "../docker/docker.js";
+import { buildCleanupPlan, executeCleanupPlan, type CleanupPlan } from "../core/cleanup.js";
+import { DockerManager } from "../docker/manager.js";
+
+type CleanOptions = {
+  runId?: string;
+  keepLogs?: boolean;
+  force?: boolean;
+  dryRun?: boolean;
+  removeContainers?: boolean;
+};
 
 export async function cleanCommand(
   projectName: string,
   _config: ProjectConfig,
-  opts: { runId?: string; keepLogs?: boolean },
+  opts: CleanOptions,
 ): Promise<void> {
-  const runId = opts.runId ?? findLatestRunId(projectName);
-  if (!runId) {
+  const removeContainers = opts.removeContainers !== false;
+  const dockerManager = removeContainers ? new DockerManager() : undefined;
+
+  let plan: CleanupPlan | null;
+  try {
+    plan = await buildCleanupPlan(projectName, {
+      runId: opts.runId,
+      keepLogs: opts.keepLogs,
+      removeContainers,
+      dockerManager,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`Failed to build cleanup plan: ${detail}`);
+    if (removeContainers) {
+      console.error("Hint: rerun with --no-containers if Docker is unavailable.");
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!plan) {
     console.log(`No runs found for project ${projectName}.`);
     return;
   }
 
-  // Remove workspaces
-  const wdir = runWorkspaceDir(projectName, runId);
-  if (fs.existsSync(wdir)) {
-    await fse.remove(wdir);
-    console.log(`Removed workspaces: ${wdir}`);
+  if (plan.targets.length === 0 && plan.containers.length === 0) {
+    const suffix = removeContainers ? "" : " Containers were not checked (--no-containers).";
+    console.log(`Nothing to clean for run ${plan.runId}.${suffix}`);
+    return;
   }
 
-  if (!opts.keepLogs) {
-    const ldir = runLogsDir(projectName, runId);
-    if (fs.existsSync(ldir)) {
-      await fse.remove(ldir);
-      console.log(`Removed logs: ${ldir}`);
+  printPlan(plan, { keepLogs: opts.keepLogs ?? false, includeContainers: removeContainers });
+
+  if (opts.dryRun) {
+    console.log("Dry run only. No files or containers were removed.");
+    return;
+  }
+
+  if (!(opts.force ?? false)) {
+    const confirmed = await confirmCleanup(plan.runId);
+    if (!confirmed) {
+      console.log("Cleanup cancelled.");
+      return;
     }
   }
 
-  // Remove containers with matching label
-  const docker = dockerClient();
-  const containers = await docker.listContainers({ all: true });
-  const toRemove = containers.filter(
-    (c) =>
-      c.Labels?.["task-orchestrator.project"] === projectName &&
-      c.Labels?.["task-orchestrator.run_id"] === runId,
-  );
-  for (const c of toRemove) {
-    try {
-      const container = docker.getContainer(c.Id);
-      if (c.State === "running") {
-        await container.stop({ t: 5 });
-      }
-      await container.remove({ force: true });
-      console.log(`Removed container: ${c.Names?.[0] ?? c.Id}`);
-    } catch {
-      // ignore
-    }
+  try {
+    await executeCleanupPlan(plan, {
+      dryRun: false,
+      log: (msg) => console.log(msg),
+      dockerManager,
+    });
+    console.log("Cleanup complete.");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`Cleanup failed: ${detail}`);
+    process.exitCode = 1;
   }
 }
 
-function findLatestRunId(projectName: string): string | null {
-  const dir = runStateDir(projectName);
-  if (!fs.existsSync(dir)) return null;
-  const files = fs.readdirSync(dir).filter((f) => f.startsWith("run-") && f.endsWith(".json"));
-  if (files.length === 0) return null;
-  files.sort();
-  const latest = files[files.length - 1];
-  return latest.replace(/^run-/, "").replace(/\.json$/, "");
+function printPlan(plan: CleanupPlan, opts: { keepLogs: boolean; includeContainers: boolean }): void {
+  console.log(`Cleaning run ${plan.runId} for project ${plan.projectName}:`);
+
+  for (const target of plan.targets) {
+    console.log(`- ${target.kind}: ${target.path}`);
+  }
+
+  if (plan.containers.length > 0) {
+    for (const container of plan.containers) {
+      const label = container.name ?? container.id;
+      const state = container.state ?? container.status ?? "unknown";
+      console.log(`- container: ${label} [state=${state}]`);
+    }
+  } else if (opts.includeContainers) {
+    console.log("- no containers found for this run");
+  }
+
+  if (opts.keepLogs && !plan.targets.some((t) => t.kind === "logs")) {
+    console.log("- logs retained (--keep-logs)");
+  }
+
+  if (!opts.includeContainers) {
+    console.log("- containers retained (--no-containers)");
+  }
+}
+
+async function confirmCleanup(runId: string): Promise<boolean> {
+  if (!input.isTTY || !output.isTTY) {
+    console.log("Non-interactive session detected. Re-run with --force to skip confirmation.");
+    return false;
+  }
+
+  const rl = createInterface({ input, output });
+  const answer = await rl.question(`Proceed with deleting artifacts for run ${runId}? (y/N) `);
+  rl.close();
+
+  return /^y(es)?$/i.test(answer.trim());
 }

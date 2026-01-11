@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Add cleanup routines for workspaces and optional Docker containers after runs.
@@ -27,10 +27,10 @@ Add cleanup routines for workspaces and optional Docker containers after runs.
 - Rollback: Restrict deletion to run-scoped directories only; require --force.
 
 ## Implementation Checklist
-- [ ] Implement `clean --project <name> [--run-id <id>] [--keep-logs] [--force]`.
-- [ ] Only delete inside configured workspacesDir/stateDir/logsDir; refuse to delete outside.
-- [ ] Optionally remove containers created by orchestrator when cleanupOnSuccess is true.
-- [ ] Log cleanup actions.
+- [x] Implement `clean --project <name> [--run-id <id>] [--keep-logs] [--force]`.
+- [x] Only delete inside configured workspacesDir/stateDir/logsDir; refuse to delete outside.
+- [x] Optionally remove containers created by orchestrator when cleanupOnSuccess is true.
+- [x] Log cleanup actions.
 
 ## Verification
 - `npm test`

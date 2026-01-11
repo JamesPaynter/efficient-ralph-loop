@@ -40,6 +40,13 @@ export type ExecResult = {
   stderr: string;
 };
 
+export type RunContainerSummary = {
+  id: string;
+  name?: string;
+  state?: string;
+  status?: string;
+};
+
 export class DockerManager {
   private readonly docker: Docker;
   private readonly cleanupOnSuccess: boolean;
@@ -155,6 +162,36 @@ export class DockerManager {
   async removeContainer(container: Docker.Container): Promise<void> {
     await removeDockerContainer(container);
   }
+
+  async listRunContainers(projectName: string, runId: string): Promise<RunContainerSummary[]> {
+    const containers = await this.docker.listContainers({ all: true });
+    const matches = containers.filter(
+      (c) =>
+        c.Labels?.["task-orchestrator.project"] === projectName &&
+        c.Labels?.["task-orchestrator.run_id"] === runId,
+    );
+
+    return matches.map((c) => ({
+      id: c.Id,
+      name: firstContainerName(c.Names),
+      state: c.State,
+      status: c.Status,
+    }));
+  }
+
+  async removeContainers(containers: RunContainerSummary[]): Promise<void> {
+    for (const c of containers) {
+      const container = this.docker.getContainer(c.id);
+      try {
+        if (c.state === "running") {
+          await container.stop({ t: 5 });
+        }
+      } catch {
+        // best-effort stop; continue to remove
+      }
+      await removeDockerContainer(container);
+    }
+  }
 }
 
 function normalizeEnv(env?: Record<string, string | undefined>): string[] | undefined {
@@ -204,4 +241,10 @@ function collectStream(stream: PassThrough): Promise<string> {
     stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     stream.on("error", reject);
   });
+}
+
+function firstContainerName(names?: string[]): string | undefined {
+  if (!names || names.length === 0) return undefined;
+  const raw = names[0] ?? "";
+  return raw.startsWith("/") ? raw.slice(1) : raw;
 }
