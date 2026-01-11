@@ -28,11 +28,11 @@ Create the baseline Node/TypeScript repository structure and build pipeline.
 - Rollback: Revert commit(s) touching config files; regenerate with preferred tooling if needed.
 
 ## Implementation Checklist
-- [ ] Create package.json with scripts: build, typecheck, start (optional).
-- [ ] Add tsconfig.json with strict=true and outDir=dist.
-- [ ] Create src/index.ts stub with basic argument parsing placeholder.
-- [ ] Add .gitignore for generated artifacts.
-- [ ] Document local setup in README.md.
+- [x] Create package.json with scripts: build, typecheck, start (optional).
+- [x] Add tsconfig.json with strict=true and outDir=dist.
+- [x] Create src/index.ts stub with basic argument parsing placeholder.
+- [x] Add .gitignore for generated artifacts.
+- [x] Document local setup in README.md.
 
 ## Verification
 - `npm install`

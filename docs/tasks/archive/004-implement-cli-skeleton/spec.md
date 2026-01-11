@@ -31,10 +31,10 @@ Add the top-level CLI with subcommand routing and global options.
 - Rollback: Revert CLI wiring; keep command stubs for later.
 
 ## Implementation Checklist
-- [ ] Pick CLI library (e.g., commander) and implement root command.
-- [ ] Add subcommands and shared options: --project, --config, --verbose, --dry-run.
-- [ ] Ensure `--help` output renders and exits 0.
-- [ ] Add a bin mapping so `npx task-orchestrator` or local install works.
+- [x] Pick CLI library (e.g., commander) and implement root command.
+- [x] Add subcommands and shared options: --project, --config, --verbose, --dry-run.
+- [x] Ensure `--help` output renders and exits 0.
+- [x] Add a bin mapping so `npx task-orchestrator` or local install works.
 
 ## Verification
 - `npm run build`
