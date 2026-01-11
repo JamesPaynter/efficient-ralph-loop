@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Define and validate the task manifest JSON format and loader for .tasks/ directories.
@@ -27,10 +27,10 @@ Define and validate the task manifest JSON format and loader for .tasks/ directo
 - Rollback: Relax schema validation; log warnings for unknown fields.
 
 ## Implementation Checklist
-- [ ] Implement manifest schema per spec (id, name, description, estimated_minutes, locks, files, verify).
-- [ ] Validate resource lock arrays and ensure no unknown resource names (when resources are known).
-- [ ] Implement loader scanning .tasks/*/manifest.json and sorting by id.
-- [ ] Surface per-task validation errors without crashing whole run unless configured.
+- [x] Implement manifest schema per spec (id, name, description, estimated_minutes, locks, files, verify).
+- [x] Validate resource lock arrays and ensure no unknown resource names (when resources are known).
+- [x] Implement loader scanning .tasks/*/manifest.json and sorting by id.
+- [x] Surface per-task validation errors without crashing whole run unless configured.
 
 ## Verification
 - `npm test`

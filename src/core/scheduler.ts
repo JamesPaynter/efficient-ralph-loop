@@ -1,4 +1,4 @@
-import type { TaskManifest, TaskSpec } from "./manifest.js";
+import type { TaskManifest, TaskSpec } from "./task-manifest.js";
 
 export type Batch = TaskSpec[];
 

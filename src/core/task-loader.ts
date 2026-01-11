@@ -1,0 +1,155 @@
+import path from "node:path";
+
+import fg from "fast-glob";
+import fse from "fs-extra";
+
+import { TaskError } from "./errors.js";
+import {
+  TaskManifestSchema,
+  formatManifestIssues,
+  validateResourceLocks,
+  type TaskSpec,
+} from "./task-manifest.js";
+import { slugify } from "./utils.js";
+
+export type TaskValidationError = {
+  manifestPath: string;
+  taskId?: string;
+  issues: string[];
+};
+
+export type TaskLoaderOptions = {
+  knownResources?: string[];
+  strict?: boolean; // throw when errors are present
+};
+
+export type TaskLoaderResult = {
+  tasks: TaskSpec[];
+  errors: TaskValidationError[];
+};
+
+export async function loadTaskSpecs(
+  repoPath: string,
+  tasksDirRelative: string,
+  opts: TaskLoaderOptions = {},
+): Promise<TaskLoaderResult> {
+  const tasksDirAbs = path.resolve(repoPath, tasksDirRelative);
+  const strict = opts.strict ?? true;
+  const resources = opts.knownResources ?? [];
+
+  const exists = await fse.pathExists(tasksDirAbs);
+  if (!exists) {
+    return { tasks: [], errors: [] };
+  }
+
+  const manifestPaths = await fg(["*/manifest.json"], { cwd: tasksDirAbs, absolute: true });
+  const tasks: TaskSpec[] = [];
+  const errors: TaskValidationError[] = [];
+
+  for (const manifestPath of manifestPaths) {
+    const taskDir = path.dirname(manifestPath);
+    const specPath = path.join(taskDir, "spec.md");
+
+    const parsedManifest = await parseManifest(manifestPath);
+    if (!parsedManifest.success) {
+      errors.push({
+        manifestPath,
+        taskId: parsedManifest.taskId,
+        issues: parsedManifest.issues,
+      });
+      continue;
+    }
+
+    const manifest = parsedManifest.manifest;
+    const lockIssues = validateResourceLocks(manifest, resources);
+    if (lockIssues.length > 0) {
+      errors.push({ manifestPath, taskId: manifest.id, issues: lockIssues });
+      continue;
+    }
+
+    const slug = slugify(manifest.name);
+    tasks.push({
+      manifest,
+      taskDir,
+      manifestPath,
+      specPath,
+      slug,
+    });
+  }
+
+  tasks.sort(compareTasksById);
+
+  if (errors.length > 0 && strict) {
+    throw new TaskError(buildErrorMessage(errors));
+  }
+
+  return { tasks, errors };
+}
+
+function compareTasksById(a: TaskSpec, b: TaskSpec): number {
+  const ai = Number(a.manifest.id);
+  const bi = Number(b.manifest.id);
+  if (!Number.isNaN(ai) && !Number.isNaN(bi)) return ai - bi;
+  return a.manifest.id.localeCompare(b.manifest.id);
+}
+
+type ParsedManifestResult =
+  | { success: true; manifest: TaskSpec["manifest"] }
+  | { success: false; issues: string[]; taskId?: string };
+
+async function parseManifest(manifestPath: string): Promise<ParsedManifestResult> {
+  let manifestRaw: string;
+  try {
+    manifestRaw = await fse.readFile(manifestPath, "utf8");
+  } catch (err) {
+    return {
+      success: false,
+      issues: [`Failed to read manifest: ${formatError(err)}`],
+    };
+  }
+
+  let manifestJson: unknown;
+  try {
+    manifestJson = JSON.parse(manifestRaw);
+  } catch (err) {
+    return {
+      success: false,
+      issues: [`Invalid JSON: ${formatError(err)}`],
+    };
+  }
+
+  const parsed = TaskManifestSchema.safeParse(manifestJson);
+  if (!parsed.success) {
+    return {
+      success: false,
+      taskId: extractTaskId(manifestJson),
+      issues: formatManifestIssues(parsed.error.issues),
+    };
+  }
+
+  return { success: true, manifest: parsed.data };
+}
+
+function extractTaskId(raw: unknown): string | undefined {
+  if (raw && typeof raw === "object" && "id" in raw && typeof raw.id === "string") {
+    return raw.id;
+  }
+  return undefined;
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function buildErrorMessage(errors: TaskValidationError[]): string {
+  const details = errors
+    .map((err) => {
+      const idPart = err.taskId ? ` (task ${err.taskId})` : "";
+      const issues = err.issues.map((i) => `  - ${i}`).join("\n");
+      return `${err.manifestPath}${idPart}:\n${issues}`;
+    })
+    .join("\n");
+
+  return `Invalid task manifest(s):\n${details}`;
+}

@@ -1,7 +1,6 @@
 import path from "node:path";
 
 import { execa, execaCommand } from "execa";
-import fg from "fast-glob";
 import fse from "fs-extra";
 
 import {
@@ -27,7 +26,8 @@ import {
 
 import type { ProjectConfig } from "./config.js";
 import { JsonlLogger, eventWithTs } from "./logger.js";
-import { TaskManifestSchema, type TaskSpec } from "./manifest.js";
+import { loadTaskSpecs } from "./task-loader.js";
+import type { TaskSpec } from "./task-manifest.js";
 import {
   orchestratorHome,
   runStatePath,
@@ -38,7 +38,7 @@ import {
 } from "./paths.js";
 import { buildGreedyBatch, topologicalReady } from "./scheduler.js";
 import { createRunState, saveRunState, loadRunState, type RunState } from "./state.js";
-import { slugify, ensureDir, defaultRunId, isoNow, pathExists } from "./utils.js";
+import { ensureDir, defaultRunId, isoNow, pathExists } from "./utils.js";
 
 export type RunOptions = {
   runId?: string;
@@ -48,48 +48,6 @@ export type RunOptions = {
   buildImage?: boolean;
   cleanupOnSuccess?: boolean;
 };
-
-export async function loadTaskSpecs(
-  repoPath: string,
-  tasksDirRelative: string,
-): Promise<TaskSpec[]> {
-  const tasksDirAbs = path.join(repoPath, tasksDirRelative);
-  const manifestPaths = await fg(["*/manifest.json"], { cwd: tasksDirAbs, absolute: true });
-
-  const tasks: TaskSpec[] = [];
-  for (const manifestPath of manifestPaths) {
-    const taskDir = path.dirname(manifestPath);
-    const specPath = path.join(taskDir, "spec.md");
-
-    const manifestRaw = await fse.readFile(manifestPath, "utf8");
-    const manifestJson = JSON.parse(manifestRaw);
-    const parsed = TaskManifestSchema.safeParse(manifestJson);
-    if (!parsed.success) {
-      throw new Error(`Invalid manifest at ${manifestPath}: ${parsed.error.toString()}`);
-    }
-
-    const manifest = parsed.data;
-    const slug = slugify(manifest.name);
-
-    tasks.push({
-      manifest,
-      taskDir,
-      manifestPath,
-      specPath,
-      slug,
-    });
-  }
-
-  // Sort by id numeric if possible, else lexicographic.
-  tasks.sort((a, b) => {
-    const ai = Number(a.manifest.id);
-    const bi = Number(b.manifest.id);
-    if (!Number.isNaN(ai) && !Number.isNaN(bi)) return ai - bi;
-    return a.manifest.id.localeCompare(b.manifest.id);
-  });
-
-  return tasks;
-}
 
 export async function runProject(
   projectName: string,
@@ -120,7 +78,18 @@ export async function runProject(
   });
 
   // Load tasks.
-  let tasks = await loadTaskSpecs(repoPath, config.tasks_dir);
+  let tasks: TaskSpec[];
+  try {
+    const res = await loadTaskSpecs(repoPath, config.tasks_dir, {
+      knownResources: config.resources.map((r) => r.name),
+    });
+    tasks = res.tasks;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    orchLog.log(eventWithTs({ type: "run.tasks_invalid", message }));
+    orchLog.close();
+    throw err;
+  }
   if (opts.tasks && opts.tasks.length > 0) {
     const allow = new Set(opts.tasks);
     tasks = tasks.filter((t) => allow.has(t.manifest.id));
