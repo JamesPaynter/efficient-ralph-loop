@@ -23,6 +23,10 @@ export function logsBaseDir(projectName: string): string {
   return path.join(orchestratorHome(), "logs", projectName);
 }
 
+export function runStateDir(projectName: string): string {
+  return stateBaseDir(projectName);
+}
+
 export function runStatePath(projectName: string, runId: string): string {
   return path.join(stateBaseDir(projectName), `run-${runId}.json`);
 }

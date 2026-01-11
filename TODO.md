@@ -1,6 +1,6 @@
 # TODO
 
-- [ ] [001 - Scaffold TypeScript project](docs/tasks/active/001-scaffold-typescript-project/spec.md) (Effort <M>, Tier <mini>)
+- [x] [001 - Scaffold TypeScript project](docs/tasks/active/001-scaffold-typescript-project/spec.md) (Effort <M>, Tier <mini>)
 - [ ] [002 - Add linting and formatting](docs/tasks/active/002-add-linting-and-formatting/spec.md) (Effort <S>, Tier <mini>)
 - [ ] [003 - Add unit test runner](docs/tasks/active/003-add-test-runner/spec.md) (Effort <S>, Tier <mini>)
 - [ ] [004 - Implement CLI skeleton](docs/tasks/active/004-implement-cli-skeleton/spec.md) (Effort <M>, Tier <mini>)

@@ -1,7 +1,7 @@
 import path from "node:path";
 import fse from "fs-extra";
 import fg from "fast-glob";
-import { execa } from "execa";
+import { execa, execaCommand } from "execa";
 
 import type { ProjectConfig } from "./config.js";
 import { TaskManifestSchema, type TaskSpec } from "./manifest.js";
@@ -363,7 +363,7 @@ export async function runProject(projectName: string, config: ProjectConfig, opt
 
       // Integration doctor
       orchLog.log(eventWithTs({ type: "doctor.integration.start", batch_id: batchId, command: config.doctor }));
-      const doctorRes = await execa.command(config.doctor, {
+      const doctorRes = await execaCommand(config.doctor, {
         cwd: repoPath,
         shell: true,
         reject: false,

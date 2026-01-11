@@ -9,10 +9,14 @@ export async function git(cwd: string, args: string[], opts: Options = {}): Prom
       env: process.env,
       ...opts
     });
-    return { stdout: res.stdout, stderr: res.stderr, exitCode: res.exitCode };
+    const stdout = typeof res.stdout === "string" ? res.stdout : String(res.stdout ?? "");
+    const stderr = typeof res.stderr === "string" ? res.stderr : String(res.stderr ?? "");
+    return { stdout, stderr, exitCode: res.exitCode ?? -1 };
   } catch (err: any) {
-    const stdout = err?.stdout ?? "";
-    const stderr = err?.stderr ?? err?.message ?? "";
+    const stdoutValue = err?.stdout ?? "";
+    const stderrValue = err?.stderr ?? err?.message ?? "";
+    const stdout = typeof stdoutValue === "string" ? stdoutValue : String(stdoutValue);
+    const stderr = typeof stderrValue === "string" ? stderrValue : String(stderrValue);
     throw new GitError(`git ${args.join(" ")} failed (cwd=${cwd}): ${stderr}`, { stdout, stderr });
   }
 }

@@ -35,7 +35,7 @@ export async function cleanCommand(
   // Remove containers with matching label
   const docker = dockerClient();
   const containers = await docker.listContainers({ all: true });
-  const toRemove = containers.filter((c) => c.Labels?."task-orchestrator.project" === projectName && c.Labels?."task-orchestrator.run_id" === runId);
+  const toRemove = containers.filter((c) => c.Labels?.["task-orchestrator.project"] === projectName && c.Labels?.["task-orchestrator.run_id"] === runId);
   for (const c of toRemove) {
     try {
       const container = docker.getContainer(c.Id);

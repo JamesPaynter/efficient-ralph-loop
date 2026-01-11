@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { execa } from "execa";
+import { execa, execaCommand } from "execa";
 import { Codex } from "@openai/codex-sdk";
 
 type Json = Record<string, unknown>;
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   if (bootstrapCmds.length > 0) {
     log({ type: "bootstrap.start", task_id: taskId, cmds: bootstrapCmds });
     for (const cmd of bootstrapCmds) {
-      const res = await execa.command(cmd, {
+      const res = await execaCommand(cmd, {
         cwd: "/workspace",
         shell: true,
         reject: false,
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 
     // Run doctor
     log({ type: "doctor.start", task_id: taskId, attempt, command: doctorCmd });
-    const doctorRes = await execa.command(doctorCmd, {
+    const doctorRes = await execaCommand(doctorCmd, {
       cwd: "/workspace",
       shell: true,
       reject: false,

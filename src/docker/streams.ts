@@ -19,7 +19,9 @@ export async function attachLineStream(container: Docker.Container, onLine: Stre
 
   return () => {
     for (const c of cleaners) c();
-    raw.destroy();
+    if (typeof (raw as any).destroy === "function") {
+      (raw as any).destroy();
+    }
     stdout.destroy();
     stderr.destroy();
   };

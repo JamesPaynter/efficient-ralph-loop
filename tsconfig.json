@@ -13,5 +13,5 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "worker/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts", "worker/**/*.ts"]
 }

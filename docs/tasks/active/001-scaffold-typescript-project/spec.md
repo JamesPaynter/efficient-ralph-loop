@@ -2,9 +2,9 @@
 
 ## Status
 - [x] Scoped
-- [ ] In Progress
-- [ ] Implemented
-- [ ] Verified
+- [x] In Progress
+- [x] Implemented
+- [x] Verified
 
 ## Summary
 Create the baseline Node/TypeScript repository structure and build pipeline.

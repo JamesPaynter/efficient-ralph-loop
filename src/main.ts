@@ -1,11 +1,8 @@
-import { buildCli } from "./cli/index.js";
+import { main } from "./index.js";
 
-export async function main(argv: string[]): Promise<void> {
-  const program = buildCli();
-  await program.parseAsync(argv);
-}
+export { main };
 
-// Allow `node dist/src/main.js` direct execution
+// Allow `node dist/src/main.js` direct execution (legacy entrypoint)
 if (import.meta.url === `file://${process.argv[1]}`) {
   void main(process.argv);
 }

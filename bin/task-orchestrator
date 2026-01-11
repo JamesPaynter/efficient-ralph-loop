@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { main } from "../dist/src/main.js";
+import { main } from "../dist/index.js";
 
 main(process.argv).catch((err) => {
   console.error(err);

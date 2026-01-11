@@ -80,6 +80,14 @@ task-orchestrator plan \
 task-orchestrator run --project my-project
 ```
 
+## Development
+
+- Node 20+
+- `npm run build` — compile TypeScript to `dist/`
+- `npm run typecheck` — strict type checking without emit
+- `npm test` — run the Node test runner
+- `npm start -- --help` — execute the built CLI entrypoint
+
 ## Repo layout
 
 - `src/` — orchestrator CLI + core engine
