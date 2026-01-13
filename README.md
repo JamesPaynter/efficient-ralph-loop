@@ -1,6 +1,23 @@
-# Agent Loop Harness
+# Efficient Ralph Loops
 
-Runs an LLM agent in a loop inside Docker until the project marks itself done. Two scripts—one for OpenAI Codex, one for Anthropic Claude—mount your project, feed instructions, and exit when the done pattern appears in the TODO file.
+Runs an Codex / Claude Code in a bash loop inside Docker until the project marks itself done. Two scripts—one for OpenAI Codex, one for Anthropic Claude—mount your project, feed instructions, and exit when the done pattern appears in the TODO file.
+
+
+## Why
+
+Simple retry loops ("Ralph loops") work but have issues:
+
+- Ralph loops are inefficient, and burn tokens quickly.
+- Agent WILL write bad tests just to satisfy exit conditions
+- Context resets each loop with no memory of what was tried
+
+Efficient Ralph Loops adds structure:
+
+- Agent works from a TODO list, one task per iteration
+- Each task has clear acceptance criteria
+- Git commits preserve progress between loops
+- Loop stops when all tasks are marked complete
+
 
 ## Contents
 
