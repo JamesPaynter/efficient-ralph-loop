@@ -1,4 +1,3 @@
-```markdown
 # Agent Loop Harness
 
 Runs an LLM agent in a loop inside Docker until the project marks itself done. Two scripts—one for OpenAI Codex, one for Anthropic Claude—mount your project, feed instructions, and exit when the done pattern appears in the TODO file.
@@ -87,4 +86,3 @@ Replace `YOUR_PROJECT/` contents with your own. Update `TODO.md` tasks and mark 
 ## Security
 
 Both scripts bypass approval prompts (`--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude). Run on isolated/trusted workspaces only.
-```
