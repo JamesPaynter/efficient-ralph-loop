@@ -1,3 +1,11 @@
+---
+name: plan
+description: >
+  Read PLAN.md and generate a complete, prioritized task backlog by creating TODO.md
+  and a task spec folder for each task under docs/tasks/active/. Produces small,
+  sequential, verifiable tasks with stable IDs and consistent folder/link structure.
+---
+
 # plan
 
 Read `PLAN.md` and generate a complete task backlog.
@@ -20,19 +28,21 @@ Read `PLAN.md` and generate a complete task backlog.
 - [ ] [002 - Next task](docs/tasks/active/002-next-task/spec.md) (Effort: M, Tier: mini)
 ...
 - [ ] ALL_TASKS_COMPLETE
-```
+````
 
 Guidelines:
-- Order by priority (highest first)
-- Keep tasks small - if it takes more than a day, split it
-- Use action verbs: "Add...", "Implement...", "Create..."
-- Always end with `ALL_TASKS_COMPLETE` marker
+
+* Order by priority (highest first)
+* Keep tasks small - if it takes more than a day, split it
+* Use action verbs: "Add...", "Implement...", "Create..."
+* Always end with `ALL_TASKS_COMPLETE` marker
 
 ### Task folders
 
 For each task, create `docs/tasks/active/NNN-task-name/` with three files:
 
 **spec.md:**
+
 ```markdown
 # Task: [Title]
 
@@ -81,6 +91,7 @@ One sentence describing what this task does.
 ```
 
 **scratchpad.md:**
+
 ```markdown
 # Scratchpad
 
@@ -98,6 +109,7 @@ Working notes during implementation.
 ```
 
 **lessons-learned.md:**
+
 ```markdown
 # Lessons Learned
 

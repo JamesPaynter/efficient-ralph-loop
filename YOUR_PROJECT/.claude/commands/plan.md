@@ -1,3 +1,22 @@
+---
+name: plan
+description: >
+  Read PLAN.md and generate a complete, prioritized task backlog by creating TODO.md
+  and one task folder per task under docs/tasks/active/. Use small, sequential,
+  verifiable tasks with stable IDs and consistent folder/link structure.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash(mkdir:*)
+  - Bash(ls:*)
+  - Bash(find:*)
+  - Bash(test:*)
+  - Bash(rg:*)
+---
+
 # plan
 
 Read `PLAN.md` and generate a complete task backlog.
@@ -20,19 +39,21 @@ Read `PLAN.md` and generate a complete task backlog.
 - [ ] [002 - Next task](docs/tasks/active/002-next-task/spec.md) (Effort: M, Tier: mini)
 ...
 - [ ] ALL_TASKS_COMPLETE
-```
+````
 
 Guidelines:
-- Order by priority (highest first)
-- Keep tasks small - if it takes more than a day, split it
-- Use action verbs: "Add...", "Implement...", "Create..."
-- Always end with `ALL_TASKS_COMPLETE` marker
+
+* Order by priority (highest first)
+* Keep tasks small - if it takes more than a day, split it
+* Use action verbs: "Add...", "Implement...", "Create..."
+* Always end with `ALL_TASKS_COMPLETE` marker
 
 ### Task folders
 
 For each task, create `docs/tasks/active/NNN-task-name/` with three files:
 
 **spec.md:**
+
 ```markdown
 # Task: [Title]
 
@@ -43,11 +64,9 @@ For each task, create `docs/tasks/active/NNN-task-name/` with three files:
 - [ ] Verified
 
 ## Summary
-
 One sentence describing what this task does.
 
 ## Effort
-
 - **Effort:** XS | S | M | L | XL
 - **Tier:** mini | standard | large
 
@@ -81,6 +100,7 @@ One sentence describing what this task does.
 ```
 
 **scratchpad.md:**
+
 ```markdown
 # Scratchpad
 
@@ -98,23 +118,20 @@ Working notes during implementation.
 ```
 
 **lessons-learned.md:**
+
 ```markdown
 # Lessons Learned
 
 ## What Went Well
-
 -
 
 ## What Was Tricky
-
 -
 
 ## Unexpected Discoveries
-
 -
 
 ## Recommendations
-
 -
 ```
 

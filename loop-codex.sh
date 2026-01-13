@@ -76,6 +76,7 @@ run_agent() {
       --model gpt-5.1-codex-max \
       -c model_reasoning_effort=xhigh \
       --dangerously-bypass-approvals-and-sandbox \
+      --skip-git-repo-check \
       - < "$INSTRUCTIONS_FILE"
 }
 
