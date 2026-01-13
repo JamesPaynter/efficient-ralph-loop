@@ -1,14 +1,25 @@
 ---
-name: plan
+name: bootstrap
 description: >
-  Read PLAN.md and generate a complete, prioritized task backlog by creating TODO.md
-  and a task spec folder for each task under docs/tasks/active/. Produces small,
-  sequential, verifiable tasks with stable IDs and consistent folder/link structure.
+  Bootstrap the project by reading PLAN.md and generating a complete, prioritized task backlog by creating TODO.md
+  and one task folder per task under docs/tasks/active/. Use small, sequential,
+  verifiable tasks with stable IDs and consistent folder/link structure.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash(mkdir:*)
+  - Bash(ls:*)
+  - Bash(find:*)
+  - Bash(test:*)
+  - Bash(rg:*)
 ---
 
-# plan
+# bootstrap
 
-Read `PLAN.md` and generate a complete task backlog.
+Bootstrap the task backlog from `PLAN.md`.
 
 ## What to do
 
@@ -53,11 +64,9 @@ For each task, create `docs/tasks/active/NNN-task-name/` with three files:
 - [ ] Verified
 
 ## Summary
-
 One sentence describing what this task does.
 
 ## Effort
-
 - **Effort:** XS | S | M | L | XL
 - **Tier:** mini | standard | large
 
@@ -114,19 +123,15 @@ Working notes during implementation.
 # Lessons Learned
 
 ## What Went Well
-
 -
 
 ## What Was Tricky
-
 -
 
 ## Unexpected Discoveries
-
 -
 
 ## Recommendations
-
 -
 ```
 
