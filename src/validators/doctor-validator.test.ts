@@ -79,6 +79,7 @@ describe("runDoctorValidator", () => {
 
     const validatorConfig: DoctorValidatorConfig = {
       enabled: true,
+      mode: "warn",
       provider: "openai",
       model: "o3",
       run_every_n_tasks: 1,

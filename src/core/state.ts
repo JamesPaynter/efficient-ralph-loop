@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ValidatorModeSchema } from "./config.js";
 import { isoNow } from "./utils.js";
 import { LocksSchema, type NormalizedLocks } from "./task-manifest.js";
 
@@ -8,6 +9,7 @@ export const TaskStatusSchema = z.enum([
   "running",
   "complete",
   "failed",
+  "needs_human_review",
   "needs_rescope",
   "rescope_required",
   "skipped",
@@ -27,6 +29,34 @@ export const CheckpointCommitSchema = z.object({
 });
 export type CheckpointCommit = z.infer<typeof CheckpointCommitSchema>;
 
+export const ValidatorIdSchema = z.enum(["test", "doctor"]);
+export type ValidatorId = z.infer<typeof ValidatorIdSchema>;
+
+export const ValidatorStatusSchema = z.enum(["pass", "fail", "error", "skip"]);
+export type ValidatorStatus = z.infer<typeof ValidatorStatusSchema>;
+
+export const ValidatorResultSchema = z
+  .object({
+    validator: ValidatorIdSchema,
+    status: ValidatorStatusSchema,
+    mode: ValidatorModeSchema,
+    summary: z.string().optional(),
+    report_path: z.string().optional(),
+    trigger: z.string().optional(),
+  })
+  .strict();
+export type ValidatorResult = z.infer<typeof ValidatorResultSchema>;
+
+export const HumanReviewSchema = z
+  .object({
+    validator: ValidatorIdSchema,
+    reason: z.string(),
+    summary: z.string().optional(),
+    report_path: z.string().optional(),
+  })
+  .strict();
+export type HumanReview = z.infer<typeof HumanReviewSchema>;
+
 export const TaskStateSchema = z.object({
   status: TaskStatusSchema,
   batch_id: z.number().int().optional(),
@@ -40,6 +70,8 @@ export const TaskStateSchema = z.object({
   last_error: z.string().optional(),
   thread_id: z.string().optional(),
   checkpoint_commits: z.array(CheckpointCommitSchema).default([]),
+  validator_results: z.array(ValidatorResultSchema).default([]),
+  human_review: HumanReviewSchema.optional(),
 });
 
 export type TaskState = z.infer<typeof TaskStateSchema>;
@@ -81,7 +113,13 @@ export function createRunState(args: {
   const now = isoNow();
   const tasks: Record<string, TaskState> = {};
   for (const id of args.taskIds) {
-    tasks[id] = { status: "pending", attempts: 0, checkpoint_commits: [] };
+    tasks[id] = {
+      status: "pending",
+      attempts: 0,
+      checkpoint_commits: [],
+      validator_results: [],
+      human_review: undefined,
+    };
   }
 
   return {
@@ -280,6 +318,7 @@ export function resetTaskToPending(
   const task = requireTask(state, taskId);
   if (
     task.status !== "running" &&
+    task.status !== "needs_human_review" &&
     task.status !== "needs_rescope" &&
     task.status !== "rescope_required"
   ) {
@@ -304,4 +343,28 @@ function applyResetToPending(
   task.started_at = undefined;
   task.completed_at = undefined;
   task.last_error = reason;
+  task.validator_results = [];
+  task.human_review = undefined;
+}
+
+export function markTaskNeedsHumanReview(
+  state: RunState,
+  taskId: string,
+  params: { validator: ValidatorId; reason: string; summary?: string; reportPath?: string },
+  now: string = isoNow(),
+): void {
+  const task = requireTask(state, taskId);
+  if (task.status !== "complete" && task.status !== "running") {
+    throw new Error(`Cannot mark task ${taskId} needs_human_review from status ${task.status}`);
+  }
+
+  task.status = "needs_human_review";
+  task.completed_at = now;
+  task.last_error = params.reason;
+  task.human_review = {
+    validator: params.validator,
+    reason: params.reason,
+    summary: params.summary,
+    report_path: params.reportPath,
+  };
 }

@@ -16,8 +16,8 @@ This repository is intentionally an MVP: it runs the orchestrator end-to-end, bu
 
 ## Validators and access declarations
 
-- LLM validators run in advisory mode: the test validator runs per-task and the doctor validator runs periodically; neither blocks merges today.
-- The integration doctor shell command still runs after merges; doctor validator output is informational.
+- LLM validators support modes (`off | warn | block`). Default `warn` keeps advisory behavior; `block` marks tasks for human review and skips merges when a validator fails.
+- The integration doctor shell command still runs after merges; doctor validator output is persisted and can block merges when configured.
 - `locks.reads` / `locks.writes` inform scheduling only. Workers run with full filesystem access; access mismatch logging is informational when present and not enforced.
 
 ## Non-goals in this release

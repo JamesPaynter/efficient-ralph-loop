@@ -5,6 +5,7 @@ import { z } from "zod";
 // =============================================================================
 
 const LlmProviderSchema = z.enum(["openai", "anthropic", "codex"]);
+export const ValidatorModeSchema = z.enum(["off", "warn", "block"]);
 
 const ResourceSchema = z
   .object({
@@ -34,6 +35,7 @@ const WorkerSchema = z
 const ValidatorSchema = z
   .object({
     enabled: z.boolean().default(true),
+    mode: ValidatorModeSchema.default("warn"),
     provider: LlmProviderSchema.default("openai"),
     model: z.string().min(1),
     temperature: z.number().min(0).max(2).optional(),
@@ -92,6 +94,7 @@ export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
 export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
+export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
 export type ResourceConfig = z.infer<typeof ResourceSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

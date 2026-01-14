@@ -30,6 +30,7 @@ export type TaskStatusCounts = {
   running: number;
   complete: number;
   failed: number;
+  needs_human_review: number;
   needs_rescope: number;
   rescope_required: number;
   skipped: number;
@@ -51,6 +52,15 @@ export type RunStatusSummary = {
   batchCounts: BatchStatusCounts;
   taskCounts: TaskStatusCounts;
   tasks: TaskStatusRow[];
+  humanReview: HumanReviewRow[];
+};
+
+export type HumanReviewRow = {
+  id: string;
+  validator: string;
+  reason: string;
+  summary: string | null;
+  reportPath: string | null;
 };
 
 export class StateStore {
@@ -132,6 +142,7 @@ export function summarizeRunState(state: RunState): RunStatusSummary {
     batchCounts: summarizeBatchStatuses(state.batches),
     taskCounts: summarizeTaskStatuses(state.tasks),
     tasks: buildTaskStatusRows(state.tasks),
+    humanReview: buildHumanReviewRows(state.tasks),
   };
 }
 
@@ -195,6 +206,7 @@ function summarizeTaskStatuses(tasks: Record<string, TaskState>): TaskStatusCoun
     running: 0,
     complete: 0,
     failed: 0,
+    needs_human_review: 0,
     needs_rescope: 0,
     rescope_required: 0,
     skipped: 0,
@@ -216,6 +228,22 @@ function buildTaskStatusRows(tasks: Record<string, TaskState>): TaskStatusRow[] 
       branch: task.branch ?? null,
       threadId: task.thread_id ?? null,
     }))
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function buildHumanReviewRows(tasks: Record<string, TaskState>): HumanReviewRow[] {
+  return Object.entries(tasks)
+    .filter(([, task]) => task.status === "needs_human_review")
+    .map(([id, task]) => {
+      const review = task.human_review;
+      return {
+        id,
+        validator: review?.validator ?? "unknown",
+        reason: review?.reason ?? "Requires human review",
+        summary: review?.summary ?? task.last_error ?? null,
+        reportPath: review?.report_path ?? null,
+      };
+    })
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: "base" }));
 }
 

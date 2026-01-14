@@ -110,6 +110,7 @@ describe("runTestValidator", () => {
 
     const validatorConfig: ValidatorConfig = {
       enabled: true,
+      mode: "warn",
       provider: "openai",
       model: "o3",
     };

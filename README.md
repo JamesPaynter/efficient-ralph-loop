@@ -135,7 +135,7 @@ task-orchestrator run --project my-project
 
 - Dedicated per-task clones live at `~/.task-orchestrator/workspaces/<project>/run-<run-id>/task-<task-id>`; tasks never share a working tree, and manifests are copied into each workspace before execution.
 - Resume is **Level 1**: resuming resets `running` tasks to `pending` and reruns them; no container or Codex thread reattachment.
-- Validator agents run in advisory mode only (tests per task; doctor periodically); `locks.reads/writes` guide scheduling only, and workers have full filesystem access inside their containers.
+- Validator agents support modes (`off | warn | block`) with a human-review queue; default `warn` keeps advisory behavior, while `block` skips merges when validators fail. `locks.reads/writes` guide scheduling only, and workers have full filesystem access inside their containers.
 - See `docs/mvp-scope.md` for details and future upgrades.
 
 ## Notes / assumptions
@@ -147,7 +147,7 @@ task-orchestrator run --project my-project
 ## Known gaps vs your full spec (by design for MVP)
 
 - **Resume Level 1 only** — resuming resets `running` tasks to `pending` and reruns them; no container/thread reattachment.
-- **Validator agents are advisory only** — validators do not block merges; doctor validator triggers on cadence/suspicion.
+- **Validator agents default to warn** — validators can be set to `block` to skip merges and queue human review; doctor validator still runs on cadence/suspicion.
 - **Runtime sandboxing** is not enforced; manifest compliance runs post-task (warn/block) but filesystem access is still wide open during execution.
 - **Branch push restrictions** are not implemented (this design merges locally).
 - No Web UI.

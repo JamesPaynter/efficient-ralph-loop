@@ -3,6 +3,7 @@
 ## 2026-01-15
 - Archived current TODO list snapshot to docs/history/todo-2026-01-15.md; backlog remains complete.
 - Added manifest compliance enforcement (git diff vs integration), `access.requested` logging, per-task compliance reports, and optional block-to-rescope handling.
+- Added validator block modes with human review queue output, linked validator reports, and a `logs summarize --task` helper.
 
 ## 2026-01-14
 - Added worker checkpoint commits (configurable), checkpoint-to-run-state syncing, and tests covering worker loop and checkpoint merge helpers.

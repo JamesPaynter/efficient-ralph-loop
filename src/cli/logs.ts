@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { loadProjectConfig } from "../core/config-loader.js";
 import type { ProjectConfig } from "../core/config.js";
 import { LogIndex, logIndexPath, type LogIndexQuery } from "../core/log-index.js";
+import { loadRunStateForProject } from "../core/state-store.js";
 import {
   followJsonlFile,
   readJsonlFile,
@@ -16,6 +17,15 @@ import {
   type LogSearchResult,
 } from "../core/log-query.js";
 import { projectConfigPath, resolveRunLogsDir } from "../core/paths.js";
+import type { DoctorValidationReport } from "../validators/doctor-validator.js";
+import type { TestValidationReport } from "../validators/test-validator.js";
+
+type ValidatorSummaryRow = {
+  validator: string;
+  status: string;
+  summary: string | null;
+  reportPath: string | null;
+};
 
 export function registerLogsCommand(program: Command): void {
   const logs = program
@@ -69,6 +79,20 @@ export function registerLogsCommand(program: Command): void {
         runId: ctx.runId,
         taskId: opts.task,
         attempt: opts.attempt,
+      });
+    });
+
+  logs
+    .command("summarize")
+    .description("Summarize validator results for a task")
+    .requiredOption("--task <id>", "Task ID")
+    .option("--llm", "Use LLM to summarize validator failures", false)
+    .action(async (opts, command) => {
+      const ctx = buildContext(command);
+      await logsSummarize(ctx.projectName, ctx.config, {
+        runId: ctx.runId,
+        taskId: opts.task,
+        useLlm: opts.llm ?? false,
       });
     });
 
@@ -219,6 +243,171 @@ export async function logsDoctor(
     `Doctor log for task ${opts.taskId} (run ${runLogs.runId}, attempt ${attemptNum}): ${fullPath}`,
   );
   process.stdout.write(content.endsWith("\n") ? content : `${content}\n`);
+}
+
+export async function logsSummarize(
+  projectName: string,
+  _config: ProjectConfig,
+  opts: { runId?: string; taskId: string; useLlm?: boolean },
+): Promise<void> {
+  const runLogs = resolveRunLogsOrWarn(projectName, opts.runId);
+  if (!runLogs) return;
+
+  const stateResolved = await loadRunStateForProject(projectName, runLogs.runId);
+  const taskState = stateResolved?.state.tasks[opts.taskId];
+  const summaries: ValidatorSummaryRow[] = [];
+
+  if (taskState) {
+    for (const result of taskState.validator_results ?? []) {
+      summaries.push({
+        validator: result.validator,
+        status: result.status,
+        summary: result.summary ?? null,
+        reportPath: result.report_path ? relativeToRun(runLogs.dir, result.report_path) : null,
+      });
+    }
+  }
+
+  if (!summaries.some((s) => s.validator === "test")) {
+    const report = await findTestValidatorReport(runLogs.dir, opts.taskId);
+    if (report) summaries.push(report);
+  }
+
+  if (!summaries.some((s) => s.validator === "doctor")) {
+    const doctorReport = await findDoctorValidatorReport(runLogs.dir);
+    if (doctorReport) summaries.push(doctorReport);
+  }
+
+  if (summaries.length === 0) {
+    console.log(`No validator reports found for task ${opts.taskId} in run ${runLogs.runId}.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Validator summaries for task ${opts.taskId} (run ${runLogs.runId}):`);
+  for (const entry of summaries) {
+    const summaryText = entry.summary ?? "(no summary available)";
+    console.log(`- ${entry.validator}: ${entry.status} — ${summaryText}`);
+    if (entry.reportPath) {
+      console.log(`  Report: ${entry.reportPath}`);
+    }
+  }
+
+  if (taskState?.human_review) {
+    const review = taskState.human_review;
+    console.log("");
+    console.log(
+      `Human review required by ${review.validator}: ${review.reason}${review.summary ? ` — ${review.summary}` : ""}`,
+    );
+    if (review.report_path) {
+      console.log(`Report: ${relativeToRun(runLogs.dir, review.report_path)}`);
+    }
+  }
+
+  if (opts.useLlm) {
+    console.log("");
+    console.log("LLM summarization flag provided; showing rule-based summary (LLM optional).");
+  }
+}
+
+async function findTestValidatorReport(
+  runLogsDir: string,
+  taskId: string,
+): Promise<ValidatorSummaryRow | null> {
+  const dir = path.join(runLogsDir, "validators", "test-validator");
+  const reportPath = await pickLatestJson(dir, (name) => name.startsWith(`${taskId}-`));
+  if (!reportPath) return null;
+
+  const report = readValidatorResultFromFile<TestValidationReport>(reportPath);
+  if (!report) return null;
+
+  const status = report.pass ? "pass" : "fail";
+  return {
+    validator: "test",
+    status,
+    summary: summarizeTestReport(report),
+    reportPath: relativeToRun(runLogsDir, reportPath),
+  };
+}
+
+async function findDoctorValidatorReport(runLogsDir: string): Promise<ValidatorSummaryRow | null> {
+  const dir = path.join(runLogsDir, "validators", "doctor-validator");
+  const reportPath = await pickLatestJson(dir);
+  if (!reportPath) return null;
+
+  const report = readValidatorResultFromFile<DoctorValidationReport>(reportPath);
+  if (!report) return null;
+
+  const status = report.effective ? "pass" : "fail";
+  return {
+    validator: "doctor",
+    status,
+    summary: summarizeDoctorReport(report),
+    reportPath: relativeToRun(runLogsDir, reportPath),
+  };
+}
+
+async function pickLatestJson(
+  dir: string,
+  matcher: (name: string) => boolean = () => true,
+): Promise<string | null> {
+  if (!fs.existsSync(dir)) return null;
+
+  const files = fs
+    .readdirSync(dir)
+    .filter((file) => file.toLowerCase().endsWith(".json") && matcher(file));
+  if (files.length === 0) return null;
+
+  const withTime = files
+    .map((file) => {
+      const fullPath = path.join(dir, file);
+      const stat = fs.statSync(fullPath);
+      return { fullPath, mtimeMs: stat.mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return withTime[0]?.fullPath ?? null;
+}
+
+function readValidatorResultFromFile<T>(filePath: string): T | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const payload = (raw as { result?: unknown }).result;
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    return payload as T;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeTestReport(report: TestValidationReport): string {
+  const parts = [report.summary];
+  if (report.concerns.length > 0) {
+    parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  if (report.coverage_gaps.length > 0) {
+    parts.push(`Coverage gaps: ${report.coverage_gaps.length}`);
+  }
+  return parts.filter(Boolean).join(" | ");
+}
+
+function summarizeDoctorReport(report: DoctorValidationReport): string {
+  const parts = [
+    `Effective: ${report.effective ? "yes" : "no"}`,
+    `Coverage: ${report.coverage_assessment}`,
+  ];
+  if (report.concerns.length > 0) {
+    parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  if (report.recommendations.length > 0) {
+    parts.push(`Recs: ${report.recommendations.length}`);
+  }
+  return parts.join(" | ");
 }
 
 function queryLogsFromIndex(

@@ -19,7 +19,12 @@ import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
 import { ensureCodexAuthForHome } from "./codexAuth.js";
 
-import type { ManifestEnforcementPolicy, ProjectConfig } from "./config.js";
+import type {
+  DoctorValidatorConfig,
+  ManifestEnforcementPolicy,
+  ProjectConfig,
+  ValidatorMode,
+} from "./config.js";
 import {
   JsonlLogger,
   logJsonLineOrRaw,
@@ -37,13 +42,17 @@ import {
   taskLogsDir,
   taskWorkspaceDir,
   workerCodexHomeDir,
+  validatorsLogsDir,
   validatorLogPath,
+  validatorReportPath,
+  runLogsDir,
 } from "./paths.js";
 import { buildGreedyBatch, topologicalReady, type BatchPlan } from "./scheduler.js";
 import { StateStore, findLatestRunId } from "./state-store.js";
 import {
   completeBatch,
   createRunState,
+  markTaskNeedsHumanReview,
   markTaskComplete,
   markTaskFailed,
   markTaskRescopeRequired,
@@ -51,11 +60,17 @@ import {
   startBatch,
   type CheckpointCommit,
   type RunState,
+  type ValidatorResult,
+  type ValidatorStatus,
 } from "./state.js";
 import { ensureDir, defaultRunId, isoNow, writeJsonFile } from "./utils.js";
 import { prepareTaskWorkspace } from "./workspaces.js";
-import { runDoctorValidator } from "../validators/doctor-validator.js";
-import { runTestValidator } from "../validators/test-validator.js";
+import {
+  runDoctorValidator,
+  type DoctorValidationReport,
+  type DoctorValidatorTrigger,
+} from "../validators/doctor-validator.js";
+import { runTestValidator, type TestValidationReport } from "../validators/test-validator.js";
 import { runWorker } from "../../worker/loop.js";
 import type { WorkerLogger, WorkerLogEventInput } from "../../worker/logging.js";
 import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
@@ -103,6 +118,13 @@ type TaskFailureResult = {
 
 type TaskRunResult = TaskSuccessResult | TaskFailureResult;
 
+type ValidatorRunSummary = {
+  status: ValidatorStatus;
+  summary: string | null;
+  reportPath: string | null;
+  trigger?: string;
+};
+
 export async function runProject(
   projectName: string,
   config: ProjectConfig,
@@ -135,11 +157,11 @@ export async function runProject(
   const stateStore = new StateStore(projectName, runId);
   const orchLog = new JsonlLogger(orchestratorLogPath(projectName, runId), { runId });
   const testValidatorConfig = config.test_validator;
-  const testValidatorEnabled =
-    testValidatorConfig !== undefined && testValidatorConfig.enabled !== false;
+  const testValidatorMode = resolveValidatorMode(testValidatorConfig);
+  const testValidatorEnabled = testValidatorMode !== "off";
   const doctorValidatorConfig = config.doctor_validator;
-  const doctorValidatorEnabled =
-    doctorValidatorConfig !== undefined && doctorValidatorConfig.enabled !== false;
+  const doctorValidatorMode = resolveValidatorMode(doctorValidatorConfig);
+  const doctorValidatorEnabled = doctorValidatorMode !== "off";
   let testValidatorLog: JsonlLogger | null = null;
   let doctorValidatorLog: JsonlLogger | null = null;
   const closeValidatorLogs = (): void => {
@@ -254,7 +276,13 @@ export async function runProject(
     // Ensure new tasks found in the manifest are tracked for this run.
     for (const t of tasks) {
       if (!state.tasks[t.manifest.id]) {
-        state.tasks[t.manifest.id] = { status: "pending", attempts: 0, checkpoint_commits: [] };
+        state.tasks[t.manifest.id] = {
+          status: "pending",
+          attempts: 0,
+          checkpoint_commits: [],
+          validator_results: [],
+          human_review: undefined,
+        };
       }
     }
     await stateStore.save(state);
@@ -614,7 +642,9 @@ export async function runProject(
     batchId: number;
     batchTasks: TaskSpec[];
     results: TaskRunResult[];
-  }): Promise<"merge_conflict" | "integration_doctor_failed" | "manifest_enforcement_blocked" | undefined> {
+  }): Promise<
+    "merge_conflict" | "integration_doctor_failed" | "manifest_enforcement_blocked" | "validator_blocked" | undefined
+  > {
     const hadPendingResets = params.results.some((r) => !r.success && r.resetToPending);
     const rescopeFailures: { taskId: string; reason: string }[] = [];
     for (const r of params.results) {
@@ -724,35 +754,82 @@ export async function runProject(
     await stateStore.save(state);
     refreshStatusSets();
 
-    const successfulTasks = buildSuccessfulTaskSummaries(params.batchTasks);
+    const readyForValidation = buildSuccessfulTaskSummaries(params.batchTasks);
+    const blockedTasks = new Set<string>();
 
     if (testValidatorEnabled && testValidatorConfig) {
-      for (const r of successfulTasks) {
+      for (const r of readyForValidation) {
         const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
         if (!taskSpec) continue;
 
-        await runTestValidator({
+        const reportPath = validatorReportPath(
           projectName,
-          repoPath,
           runId,
-          task: taskSpec,
-          taskSlug: r.taskSlug,
-          workspacePath: r.workspace,
-          taskLogsDir: r.logsDir,
-          mainBranch: config.main_branch,
-          config: testValidatorConfig,
-          orchestratorLog: orchLog,
-          logger: testValidatorLog ?? undefined,
-        }).catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
+          "test-validator",
+          r.taskId,
+          r.taskSlug,
+        );
+
+        let testResult: TestValidationReport | null = null;
+        let testError: string | null = null;
+        try {
+          testResult = await runTestValidator({
+            projectName,
+            repoPath,
+            runId,
+            task: taskSpec,
+            taskSlug: r.taskSlug,
+            workspacePath: r.workspace,
+            taskLogsDir: r.logsDir,
+            mainBranch: config.main_branch,
+            config: testValidatorConfig,
+            orchestratorLog: orchLog,
+            logger: testValidatorLog ?? undefined,
+          });
+        } catch (err) {
+          testError = err instanceof Error ? err.message : String(err);
           logOrchestratorEvent(orchLog, "validator.error", {
             validator: "test",
             taskId: r.taskId,
-            message,
+            message: testError,
           });
+        }
+
+        const outcome = await summarizeTestValidatorResult(reportPath, testResult, testError);
+        const relativeReport = relativeReportPath(projectName, runId, outcome.reportPath);
+
+        setValidatorResult(state, r.taskId, {
+          validator: "test",
+          status: outcome.status,
+          mode: testValidatorMode,
+          summary: outcome.summary ?? undefined,
+          report_path: relativeReport,
         });
+
+        if (shouldBlockValidator(testValidatorMode, outcome.status)) {
+          blockedTasks.add(r.taskId);
+          const reason =
+            outcome.summary !== null && outcome.summary.trim().length > 0
+              ? `Test validator blocked merge: ${outcome.summary}`
+              : "Test validator blocked merge (mode=block)";
+          markTaskNeedsHumanReview(state, r.taskId, {
+            validator: "test",
+            reason,
+            summary: outcome.summary ?? undefined,
+            reportPath: relativeReport,
+          });
+          logOrchestratorEvent(orchLog, "validator.block", {
+            validator: "test",
+            taskId: r.taskId,
+            mode: testValidatorMode,
+            status: outcome.status,
+          });
+        }
       }
     }
+
+    await stateStore.save(state);
+    refreshStatusSets();
 
     let batchMergeCommit: string | undefined;
     let integrationDoctorPassed: boolean | undefined;
@@ -760,13 +837,84 @@ export async function runProject(
       | "merge_conflict"
       | "integration_doctor_failed"
       | "manifest_enforcement_blocked"
+      | "validator_blocked"
       | undefined;
+
+    const finishedCount = completed.size + failed.size;
+    const shouldRunDoctorValidatorCadence =
+      doctorValidatorEnabled &&
+      doctorValidatorConfig &&
+      doctorValidatorRunEvery !== undefined &&
+      finishedCount - doctorValidatorLastCount >= doctorValidatorRunEvery;
+
+    if (doctorValidatorEnabled && doctorValidatorConfig && shouldRunDoctorValidatorCadence) {
+      const doctorOutcome = await runDoctorValidatorWithReport({
+        projectName,
+        repoPath,
+        runId,
+        mainBranch: config.main_branch,
+        doctorCommand: config.doctor,
+        trigger: "cadence",
+        triggerNotes: `Cadence reached after ${finishedCount} tasks (interval ${doctorValidatorRunEvery})`,
+        config: doctorValidatorConfig,
+        orchestratorLog: orchLog,
+        logger: doctorValidatorLog ?? undefined,
+      });
+      doctorValidatorLastCount = finishedCount;
+
+      if (doctorOutcome) {
+        const relativeReport = relativeReportPath(projectName, runId, doctorOutcome.reportPath);
+        const recipients = buildSuccessfulTaskSummaries(params.batchTasks);
+
+        for (const r of recipients) {
+          setValidatorResult(state, r.taskId, {
+            validator: "doctor",
+            status: doctorOutcome.status,
+            mode: doctorValidatorMode,
+            summary: doctorOutcome.summary ?? undefined,
+            report_path: relativeReport,
+            trigger: doctorOutcome.trigger,
+          });
+
+          if (shouldBlockValidator(doctorValidatorMode, doctorOutcome.status)) {
+            blockedTasks.add(r.taskId);
+            const reason =
+              doctorOutcome.summary && doctorOutcome.summary.length > 0
+                ? `Doctor validator blocked merge: ${doctorOutcome.summary}`
+                : "Doctor validator blocked merge (mode=block)";
+            markTaskNeedsHumanReview(state, r.taskId, {
+              validator: "doctor",
+              reason,
+              summary: doctorOutcome.summary ?? undefined,
+              reportPath: relativeReport,
+            });
+            logOrchestratorEvent(orchLog, "validator.block", {
+              validator: "doctor",
+              taskId: r.taskId,
+              mode: doctorValidatorMode,
+              status: doctorOutcome.status,
+              trigger: doctorOutcome.trigger ?? "unknown",
+            });
+          }
+        }
+      }
+    }
+
+    if (blockedTasks.size > 0) {
+      stopReason = "validator_blocked";
+      state.status = "failed";
+    }
+
+    await stateStore.save(state);
+    refreshStatusSets();
+
+    const successfulTasks = buildSuccessfulTaskSummaries(params.batchTasks);
 
     if (rescopeFailures.length > 0) {
       stopReason = "manifest_enforcement_blocked";
     }
 
-    if (successfulTasks.length > 0) {
+    if (successfulTasks.length > 0 && !stopReason) {
       logOrchestratorEvent(orchLog, "batch.merging", {
         batch_id: params.batchId,
         tasks: successfulTasks.map((r) => r.taskId),
@@ -831,7 +979,10 @@ export async function runProject(
       .filter((id) => {
         const status = state.tasks[id]?.status;
         return (
-          status === "failed" || status === "needs_rescope" || status === "rescope_required"
+          status === "failed" ||
+          status === "needs_human_review" ||
+          status === "needs_rescope" ||
+          status === "rescope_required"
         );
       });
     const pendingTaskIds = params.batchTasks
@@ -851,47 +1002,60 @@ export async function runProject(
     });
     await stateStore.save(state);
 
-    const finishedCount = completed.size + failed.size;
-    const shouldRunDoctorValidatorCadence =
-      doctorValidatorEnabled &&
-      doctorValidatorConfig &&
-      doctorValidatorRunEvery !== undefined &&
-      finishedCount - doctorValidatorLastCount >= doctorValidatorRunEvery;
+    const postMergeFinishedCount = completed.size + failed.size;
     const shouldRunDoctorValidatorSuspicious =
       doctorValidatorEnabled && doctorValidatorConfig && integrationDoctorPassed === false;
 
-    if (
-      doctorValidatorEnabled &&
-      doctorValidatorConfig &&
-      (shouldRunDoctorValidatorCadence || shouldRunDoctorValidatorSuspicious)
-    ) {
-      const trigger = shouldRunDoctorValidatorSuspicious ? "integration_doctor_failed" : "cadence";
-      const triggerNotes = shouldRunDoctorValidatorSuspicious
-        ? `Integration doctor failed for batch ${params.batchId} (exit code ${lastIntegrationDoctorExitCode ?? -1})`
-        : `Cadence reached after ${finishedCount} tasks (interval ${doctorValidatorRunEvery})`;
-
-      await runDoctorValidator({
+    if (doctorValidatorEnabled && doctorValidatorConfig && shouldRunDoctorValidatorSuspicious) {
+      const doctorOutcome = await runDoctorValidatorWithReport({
         projectName,
         repoPath,
         runId,
         mainBranch: config.main_branch,
         doctorCommand: config.doctor,
-        trigger,
-        triggerNotes,
-        integrationDoctorOutput:
-          trigger === "integration_doctor_failed" ? lastIntegrationDoctorOutput : undefined,
+        trigger: "integration_doctor_failed",
+        triggerNotes: `Integration doctor failed for batch ${params.batchId} (exit code ${lastIntegrationDoctorExitCode ?? -1})`,
+        integrationDoctorOutput: lastIntegrationDoctorOutput,
         config: doctorValidatorConfig,
         orchestratorLog: orchLog,
         logger: doctorValidatorLog ?? undefined,
-      }).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        logOrchestratorEvent(orchLog, "validator.error", {
-          validator: "doctor",
-          message,
-        });
       });
 
-      doctorValidatorLastCount = finishedCount;
+      doctorValidatorLastCount = postMergeFinishedCount;
+
+      if (doctorOutcome) {
+        const relativeReport = relativeReportPath(projectName, runId, doctorOutcome.reportPath);
+        for (const r of successfulTasks) {
+          setValidatorResult(state, r.taskId, {
+            validator: "doctor",
+            status: doctorOutcome.status,
+            mode: doctorValidatorMode,
+            summary: doctorOutcome.summary ?? undefined,
+            report_path: relativeReport,
+            trigger: doctorOutcome.trigger,
+          });
+
+          if (shouldBlockValidator(doctorValidatorMode, doctorOutcome.status)) {
+            markTaskNeedsHumanReview(state, r.taskId, {
+              validator: "doctor",
+              reason:
+                doctorOutcome.summary && doctorOutcome.summary.length > 0
+                  ? `Doctor validator blocked merge: ${doctorOutcome.summary}`
+                  : "Doctor validator blocked merge (mode=block)",
+              summary: doctorOutcome.summary ?? undefined,
+              reportPath: relativeReport,
+            });
+            logOrchestratorEvent(orchLog, "validator.block", {
+              validator: "doctor",
+              taskId: r.taskId,
+              mode: doctorValidatorMode,
+              status: doctorOutcome.status,
+              trigger: doctorOutcome.trigger ?? "unknown",
+            });
+          }
+        }
+        await stateStore.save(state);
+      }
     }
 
     logOrchestratorEvent(orchLog, "batch.complete", { batch_id: params.batchId });
@@ -1247,6 +1411,192 @@ export async function runProject(
   return { runId, state, plan: plannedBatches };
 }
 
+async function summarizeTestValidatorResult(
+  reportPath: string,
+  result: TestValidationReport | null,
+  error?: string | null,
+): Promise<ValidatorRunSummary> {
+  const reportFromDisk = await readValidatorReport<TestValidationReport>(reportPath);
+  const resolved = result ?? reportFromDisk;
+  const status: ValidatorStatus =
+    resolved === null ? "error" : resolved.pass ? "pass" : "fail";
+  let summary: string | null = resolved ? summarizeTestReport(resolved) : null;
+
+  if (!summary && error) {
+    summary = error;
+  }
+  if (!summary && status === "error") {
+    summary = "Test validator returned no result (see validator log).";
+  }
+
+  const exists = resolved !== null || (await fse.pathExists(reportPath));
+  return {
+    status,
+    summary,
+    reportPath: exists ? reportPath : null,
+  };
+}
+
+async function runDoctorValidatorWithReport(args: {
+  projectName: string;
+  repoPath: string;
+  runId: string;
+  mainBranch: string;
+  doctorCommand: string;
+  trigger: DoctorValidatorTrigger;
+  triggerNotes?: string;
+  integrationDoctorOutput?: string;
+  config: DoctorValidatorConfig;
+  orchestratorLog: JsonlLogger;
+  logger?: JsonlLogger;
+}): Promise<ValidatorRunSummary | null> {
+  const reportDir = path.join(validatorsLogsDir(args.projectName, args.runId), "doctor-validator");
+  const before = await listValidatorReports(reportDir);
+
+  let doctorResult: DoctorValidationReport | null = null;
+  let error: string | null = null;
+  try {
+    doctorResult = await runDoctorValidator({
+      projectName: args.projectName,
+      repoPath: args.repoPath,
+      runId: args.runId,
+      mainBranch: args.mainBranch,
+      doctorCommand: args.doctorCommand,
+      trigger: args.trigger,
+      triggerNotes: args.triggerNotes,
+      integrationDoctorOutput: args.integrationDoctorOutput,
+      config: args.config,
+      orchestratorLog: args.orchestratorLog,
+      logger: args.logger,
+    });
+  } catch (err) {
+    error = formatErrorMessage(err);
+  }
+
+  const reportPath = await findLatestReport(reportDir, before);
+  if (doctorResult) {
+    return {
+      status: doctorResult.effective ? "pass" : "fail",
+      summary: summarizeDoctorReport(doctorResult),
+      reportPath,
+      trigger: args.trigger,
+    };
+  }
+
+  if (error === null && args.config.enabled === false) {
+    return null;
+  }
+
+  return {
+    status: "error",
+    summary: error ?? "Doctor validator returned no result (see validator log).",
+    reportPath,
+    trigger: args.trigger,
+  };
+}
+
+function setValidatorResult(state: RunState, taskId: string, result: ValidatorResult): void {
+  const task = state.tasks[taskId];
+  if (!task) return;
+
+  const existing = (task.validator_results ?? []).filter((r) => r.validator !== result.validator);
+  task.validator_results = [...existing, result];
+}
+
+function relativeReportPath(
+  projectName: string,
+  runId: string,
+  reportPath: string | null,
+): string | undefined {
+  if (!reportPath) return undefined;
+
+  const base = runLogsDir(projectName, runId);
+  const relative = path.relative(base, reportPath);
+  return relative.startsWith("..") ? reportPath : relative;
+}
+
+function shouldBlockValidator(mode: ValidatorMode, status: ValidatorStatus): boolean {
+  if (mode !== "block") return false;
+  return status === "fail" || status === "error";
+}
+
+function resolveValidatorMode(cfg?: { enabled?: boolean; mode?: ValidatorMode }): ValidatorMode {
+  if (!cfg) return "off";
+  if (cfg.enabled === false) return "off";
+  return cfg.mode ?? "warn";
+}
+
+async function readValidatorReport<T>(reportPath: string): Promise<T | null> {
+  const exists = await fse.pathExists(reportPath);
+  if (!exists) return null;
+
+  const raw = await fse.readJson(reportPath).catch(() => null);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+
+  const payload = (raw as { result?: unknown }).result;
+  if (!payload || typeof payload !== "object") return null;
+
+  return payload as T;
+}
+
+async function listValidatorReports(reportDir: string): Promise<string[]> {
+  const exists = await fse.pathExists(reportDir);
+  if (!exists) return [];
+
+  const entries = await fse.readdir(reportDir);
+  return entries.filter((name) => name.toLowerCase().endsWith(".json"));
+}
+
+async function findLatestReport(reportDir: string, before: string[]): Promise<string | null> {
+  const exists = await fse.pathExists(reportDir);
+  if (!exists) return null;
+
+  const entries = (await fse.readdir(reportDir)).filter((name) => name.toLowerCase().endsWith(".json"));
+  if (entries.length === 0) return null;
+
+  const candidates = await Promise.all(
+    entries.map(async (name) => {
+      const fullPath = path.join(reportDir, name);
+      const stat = await fse.stat(fullPath).catch(() => null);
+      return { name, fullPath, mtimeMs: stat?.mtimeMs ?? 0, isNew: !before.includes(name) };
+    }),
+  );
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const newest = candidates.find((c) => c.isNew) ?? candidates[0];
+  return newest?.fullPath ?? null;
+}
+
+function summarizeTestReport(report: TestValidationReport): string {
+  const parts = [report.summary];
+  if (report.concerns.length > 0) {
+    parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  if (report.coverage_gaps.length > 0) {
+    parts.push(`Coverage gaps: ${report.coverage_gaps.length}`);
+  }
+  return parts.filter(Boolean).join(" | ");
+}
+
+function summarizeDoctorReport(report: DoctorValidationReport): string {
+  const parts = [
+    `Effective: ${report.effective ? "yes" : "no"}`,
+    `Coverage: ${report.coverage_assessment}`,
+  ];
+  if (report.concerns.length > 0) {
+    parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  if (report.recommendations.length > 0) {
+    parts.push(`Recs: ${report.recommendations.length}`);
+  }
+  return parts.join(" | ");
+}
+
+function formatErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set<string> } {
   const completed = new Set<string>(
     Object.entries(state.tasks)
@@ -1257,7 +1607,10 @@ function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set
     Object.entries(state.tasks)
       .filter(
         ([, s]) =>
-          s.status === "failed" || s.status === "needs_rescope" || s.status === "rescope_required",
+          s.status === "failed" ||
+          s.status === "needs_rescope" ||
+          s.status === "rescope_required" ||
+          s.status === "needs_human_review",
       )
       .map(([id]) => id),
   );

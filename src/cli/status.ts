@@ -3,6 +3,7 @@ import {
   loadRunStateForProject,
   summarizeRunState,
   type RunStatusSummary,
+  type HumanReviewRow,
   type TaskStatusRow,
 } from "../core/state-store.js";
 
@@ -19,6 +20,7 @@ export async function statusCommand(
 
   const summary = summarizeRunState(resolved.state);
   printRunSummary(summary);
+  printHumanReviewQueue(summary.humanReview);
   printTaskTable(summary.tasks);
 }
 
@@ -63,11 +65,43 @@ function formatTaskCounts(summary: RunStatusSummary): string {
     `running=${counts.running}`,
     `complete=${counts.complete}`,
     `failed=${counts.failed}`,
+    `needs_human_review=${counts.needs_human_review}`,
     `needs_rescope=${counts.needs_rescope}`,
     `rescope_required=${counts.rescope_required}`,
     `skipped=${counts.skipped}`,
   ];
   return `Tasks: ${parts.join("  ")}`;
+}
+
+function printHumanReviewQueue(rows: HumanReviewRow[]): void {
+  console.log("Human Review Queue:");
+  if (rows.length === 0) {
+    console.log("  (empty)");
+    console.log("");
+    return;
+  }
+
+  const idWidth = Math.max("ID".length, ...rows.map((r) => r.id.length));
+  const validatorWidth = Math.max("Validator".length, ...rows.map((r) => r.validator.length));
+  const reasonWidth = Math.max("Reason".length, ...rows.map((r) => r.reason.length));
+  const summaryWidth = Math.max(
+    "Summary".length,
+    ...rows.map((r) => (r.summary ?? "-").length),
+  );
+
+  console.log(
+    `  ${pad("ID", idWidth)}  ${pad("Validator", validatorWidth)}  ${pad("Reason", reasonWidth)}  ${pad("Summary", summaryWidth)}`,
+  );
+  for (const row of rows) {
+    const summary = row.summary ?? "-";
+    console.log(
+      `  ${pad(row.id, idWidth)}  ${pad(row.validator, validatorWidth)}  ${pad(row.reason, reasonWidth)}  ${pad(summary, summaryWidth)}`,
+    );
+    if (row.reportPath) {
+      console.log(`    Report: ${row.reportPath}`);
+    }
+  }
+  console.log("");
 }
 
 function printTaskTable(rows: TaskStatusRow[]): void {

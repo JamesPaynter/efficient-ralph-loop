@@ -54,10 +54,12 @@ worker:
   checkpoint_commits: true
 
 test_validator:
+  mode: warn
   provider: openai
   model: o3
 
 doctor_validator:
+  mode: warn
   provider: openai
   model: o3
   run_every_n_tasks: 10
