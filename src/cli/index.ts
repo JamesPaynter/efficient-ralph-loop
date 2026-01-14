@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { loadProjectConfig } from "../core/config-loader.js";
 import { projectConfigPath } from "../core/paths.js";
 
+import { autopilotCommand } from "./autopilot.js";
 import { cleanCommand } from "./clean.js";
 import { registerLogsCommand } from "./logs.js";
 import { planProject } from "./plan.js";
@@ -24,6 +25,39 @@ export function buildCli(): Command {
     .option("-v, --verbose", "Verbose output", false);
 
   registerLogsCommand(program);
+
+  program
+    .command("autopilot")
+    .requiredOption("--project <name>", "Project name")
+    .option("--plan-input <path>", "Path to implementation plan markdown")
+    .option("--plan-output <dir>", "Tasks output directory (default: <repo>/.tasks)")
+    .option("--run-id <id>", "Run/transcript id (default: timestamp)")
+    .option("--max-questions <n>", "Max interview questions", (v) => parseInt(v, 10))
+    .option("--max-parallel <n>", "Max parallel containers", (v) => parseInt(v, 10))
+    .option("--dry-run", "Plan batches but do not start workers", false)
+    .option("--skip-run", "Stop after planning and task generation", false)
+    .option("--no-build-image", "Do not auto-build the worker image if missing")
+    .option(
+      "--local-worker",
+      "Run workers directly on the host without Docker (development/pilot)",
+      false,
+    )
+    .action(async (opts) => {
+      const globals = program.opts();
+      const configPath = globals.config ?? projectConfigPath(opts.project);
+      const cfg = loadProjectConfig(configPath);
+      await autopilotCommand(opts.project, cfg, {
+        planInput: opts.planInput,
+        planOutput: opts.planOutput,
+        runId: opts.runId,
+        maxQuestions: opts.maxQuestions,
+        maxParallel: opts.maxParallel,
+        skipRun: opts.skipRun,
+        runDryRun: opts.dryRun,
+        buildImage: opts.buildImage,
+        useDocker: !opts.localWorker,
+      });
+    });
 
   program
     .command("plan")

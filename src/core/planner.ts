@@ -310,7 +310,7 @@ function formatError(err: unknown): string {
   return String(err);
 }
 
-function createPlannerClient(
+export function createPlannerClient(
   cfg: PlannerConfig,
   projectName: string,
   repoPath: string,

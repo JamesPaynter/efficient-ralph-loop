@@ -9,7 +9,7 @@
 - [x] [034 - Make validators blocking + human review queue](docs/tasks/archive/034-make-validators-blocking/spec.md) (Effort <L>, Tier <pro>)
 - [x] [035 - Doctor canary check (prove doctor is executed)](docs/tasks/archive/035-doctor-canary-check/spec.md) (Effort <M>, Tier <standard>)
 - [x] [036 - Strict TDD mode (tests-first enforcement)](docs/tasks/archive/036-strict-tdd-mode/spec.md) (Effort <L>, Tier <pro>)
-- [ ] [037 - Autopilot supervisor command (LLM-driven operator)](docs/tasks/active/037-autopilot-supervisor-command/spec.md) (Effort <L>, Tier <pro>)
+- [x] [037 - Autopilot supervisor command (LLM-driven operator)](docs/tasks/archive/037-autopilot-supervisor-command/spec.md) (Effort <L>, Tier <pro>)
 - [ ] [038 - Cost + token tracking with budgets](docs/tasks/active/038-cost-tracking-and-budgets/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [039 - Docker hardening: non-root, limits, optional no-network](docs/tasks/active/039-docker-hardening-and-limits/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [040 - Add Anthropic provider (planner/validators)](docs/tasks/active/040-add-anthropic-provider/spec.md) (Effort <M>, Tier <standard>)

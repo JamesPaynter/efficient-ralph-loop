@@ -98,6 +98,16 @@ task-orchestrator run --project my-project
 
 - Add `--local-worker` to run workers on the host when Docker is unavailable.
 
+### Autopilot (LLM supervisor)
+
+```bash
+task-orchestrator autopilot --project my-project
+```
+
+- Interactive supervisor that interviews you, drafts `docs/planning/**` artifacts, runs the planner, and starts a run with periodic status logs.
+- Transcripts land in `docs/planning/sessions/<timestamp>-autopilot.md`; default plan input is `docs/planning/002-implementation/implementation-plan.md`.
+- Flags: `--skip-run` to stop after planning, `--dry-run` to plan batches without starting workers, `--max-questions` to cap the interview.
+
 ## Doctor command expectations
 
 - Use a wrapper script for `doctor` and make it exit non-zero when `ORCH_CANARY=1`.
