@@ -46,13 +46,13 @@ import {
   createRunState,
   markTaskComplete,
   markTaskFailed,
-  markTaskNeedsRescope,
+  markTaskRescopeRequired,
   resetTaskToPending,
   startBatch,
   type CheckpointCommit,
   type RunState,
 } from "./state.js";
-import { ensureDir, defaultRunId, isoNow } from "./utils.js";
+import { ensureDir, defaultRunId, isoNow, writeJsonFile } from "./utils.js";
 import { prepareTaskWorkspace } from "./workspaces.js";
 import { runDoctorValidator } from "../validators/doctor-validator.js";
 import { runTestValidator } from "../validators/test-validator.js";
@@ -60,6 +60,7 @@ import { runWorker } from "../../worker/loop.js";
 import type { WorkerLogger, WorkerLogEventInput } from "../../worker/logging.js";
 import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
 import { runManifestCompliance, type ManifestComplianceResult } from "./manifest-compliance.js";
+import { computeRescopeFromCompliance } from "./manifest-rescope.js";
 
 export type RunOptions = {
   runId?: string;
@@ -598,11 +599,15 @@ export async function runProject(
     }
   }
 
-  function buildManifestBlockReason(result: ManifestComplianceResult): string {
+  function describeManifestViolations(result: ManifestComplianceResult): string {
     const count = result.violations.length;
     const example = result.violations[0]?.path;
     const detail = example ? ` (example: ${example})` : "";
-    return `Manifest enforcement blocked: ${count} undeclared access request(s)${detail}`;
+    return `${count} undeclared access request(s)${detail}`;
+  }
+
+  function buildManifestBlockReason(result: ManifestComplianceResult): string {
+    return `Manifest enforcement blocked: ${describeManifestViolations(result)}`;
   }
 
   async function finalizeBatch(params: {
@@ -611,7 +616,7 @@ export async function runProject(
     results: TaskRunResult[];
   }): Promise<"merge_conflict" | "integration_doctor_failed" | "manifest_enforcement_blocked" | undefined> {
     const hadPendingResets = params.results.some((r) => !r.success && r.resetToPending);
-    const manifestBlockedTasks: string[] = [];
+    const rescopeFailures: { taskId: string; reason: string }[] = [];
     for (const r of params.results) {
       if (!r.success) {
         if (r.resetToPending) {
@@ -665,15 +670,43 @@ export async function runProject(
         result: compliance,
       });
 
-      if (compliance.status === "block") {
-        const reason = buildManifestBlockReason(compliance);
-        markTaskNeedsRescope(state, r.taskId, reason);
-        logOrchestratorEvent(orchLog, "task.needs_rescope", {
+      if (compliance.violations.length > 0) {
+        const violationSummary = describeManifestViolations(compliance);
+        const rescopeReason = `Rescope required: ${violationSummary}`;
+        markTaskRescopeRequired(state, r.taskId, rescopeReason);
+        logOrchestratorEvent(orchLog, "task.rescope.start", {
           taskId: r.taskId,
           violations: compliance.violations.length,
           report_path: complianceReportPath,
+          policy: manifestPolicy,
         });
-        manifestBlockedTasks.push(r.taskId);
+
+        const rescope = computeRescopeFromCompliance(taskSpec.manifest, compliance);
+        if (rescope.status === "updated") {
+          await writeJsonFile(taskSpec.manifestPath, rescope.manifest);
+          taskSpec.manifest = rescope.manifest;
+
+          const resetReason = `Rescoped manifest: +${rescope.addedLocks.length} locks, +${rescope.addedFiles.length} files`;
+          resetTaskToPending(state, r.taskId, resetReason);
+          logOrchestratorEvent(orchLog, "task.rescope.updated", {
+            taskId: r.taskId,
+            added_locks: rescope.addedLocks,
+            added_files: rescope.addedFiles,
+            manifest_path: taskSpec.manifestPath,
+            report_path: complianceReportPath,
+          });
+          continue;
+        }
+
+        const failedReason = rescope.reason ?? rescopeReason;
+        state.tasks[r.taskId].last_error = failedReason;
+        logOrchestratorEvent(orchLog, "task.rescope.failed", {
+          taskId: r.taskId,
+          reason: failedReason,
+          violations: compliance.violations.length,
+          report_path: complianceReportPath,
+        });
+        rescopeFailures.push({ taskId: r.taskId, reason: failedReason });
         continue;
       }
 
@@ -684,7 +717,7 @@ export async function runProject(
       });
     }
 
-    if (manifestBlockedTasks.length > 0) {
+    if (rescopeFailures.length > 0) {
       state.status = "failed";
     }
 
@@ -729,7 +762,7 @@ export async function runProject(
       | "manifest_enforcement_blocked"
       | undefined;
 
-    if (manifestBlockedTasks.length > 0) {
+    if (rescopeFailures.length > 0) {
       stopReason = "manifest_enforcement_blocked";
     }
 
@@ -795,7 +828,12 @@ export async function runProject(
 
     const failedTaskIds = params.batchTasks
       .map((t) => t.manifest.id)
-      .filter((id) => state.tasks[id]?.status === "failed");
+      .filter((id) => {
+        const status = state.tasks[id]?.status;
+        return (
+          status === "failed" || status === "needs_rescope" || status === "rescope_required"
+        );
+      });
     const pendingTaskIds = params.batchTasks
       .map((t) => t.manifest.id)
       .filter((id) => state.tasks[id]?.status === "pending");
@@ -1217,7 +1255,10 @@ function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set
   );
   const failed = new Set<string>(
     Object.entries(state.tasks)
-      .filter(([, s]) => s.status === "failed" || s.status === "needs_rescope")
+      .filter(
+        ([, s]) =>
+          s.status === "failed" || s.status === "needs_rescope" || s.status === "rescope_required",
+      )
       .map(([id]) => id),
   );
   return { completed, failed };

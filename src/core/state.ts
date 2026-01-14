@@ -9,6 +9,7 @@ export const TaskStatusSchema = z.enum([
   "complete",
   "failed",
   "needs_rescope",
+  "rescope_required",
   "skipped",
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
@@ -200,6 +201,24 @@ export function markTaskNeedsRescope(
   }
 }
 
+export function markTaskRescopeRequired(
+  state: RunState,
+  taskId: string,
+  reason?: string,
+  now: string = isoNow(),
+): void {
+  const task = requireTask(state, taskId);
+  if (task.status !== "running") {
+    throw new Error(`Cannot mark task ${taskId} rescope_required from status ${task.status}`);
+  }
+
+  task.status = "rescope_required";
+  task.completed_at = now;
+  if (reason) {
+    task.last_error = reason;
+  }
+}
+
 export function completeBatch(
   state: RunState,
   batchId: number,
@@ -259,7 +278,11 @@ export function resetTaskToPending(
   now: string = isoNow(),
 ): void {
   const task = requireTask(state, taskId);
-  if (task.status !== "running") {
+  if (
+    task.status !== "running" &&
+    task.status !== "needs_rescope" &&
+    task.status !== "rescope_required"
+  ) {
     throw new Error(`Cannot reset task ${taskId} from status ${task.status}`);
   }
 
