@@ -47,6 +47,7 @@ import {
   markTaskFailed,
   resetTaskToPending,
   startBatch,
+  type CheckpointCommit,
   type RunState,
 } from "./state.js";
 import { ensureDir, defaultRunId, isoNow } from "./utils.js";
@@ -55,7 +56,7 @@ import { runDoctorValidator } from "../validators/doctor-validator.js";
 import { runTestValidator } from "../validators/test-validator.js";
 import { runWorker } from "../../worker/loop.js";
 import type { WorkerLogger, WorkerLogEventInput } from "../../worker/logging.js";
-import { loadWorkerState } from "../../worker/state.js";
+import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
 
 export type RunOptions = {
   runId?: string;
@@ -248,7 +249,7 @@ export async function runProject(
     // Ensure new tasks found in the manifest are tracked for this run.
     for (const t of tasks) {
       if (!state.tasks[t.manifest.id]) {
-        state.tasks[t.manifest.id] = { status: "pending", attempts: 0 };
+        state.tasks[t.manifest.id] = { status: "pending", attempts: 0, checkpoint_commits: [] };
       }
     }
     await stateStore.save(state);
@@ -324,20 +325,34 @@ export async function runProject(
     return { branchName, workspace, logsDir };
   };
 
-  const syncThreadIdFromWorkerState = async (
+  const syncWorkerStateIntoTask = async (
     taskId: string,
     workspace: string,
   ): Promise<boolean> => {
     try {
       const workerState = await loadWorkerState(workspace);
-      if (!workerState || !workerState.thread_id) return false;
+      if (!workerState) return false;
 
       const taskState = state.tasks[taskId];
       if (!taskState) return false;
-      if (taskState.thread_id === workerState.thread_id) return false;
 
-      taskState.thread_id = workerState.thread_id;
-      return true;
+      let changed = false;
+
+      if (workerState.thread_id && taskState.thread_id !== workerState.thread_id) {
+        taskState.thread_id = workerState.thread_id;
+        changed = true;
+      }
+
+      const mergedCheckpoints = mergeCheckpointCommits(
+        taskState.checkpoint_commits ?? [],
+        workerState.checkpoints ?? [],
+      );
+      if (!checkpointListsEqual(taskState.checkpoint_commits ?? [], mergedCheckpoints)) {
+        taskState.checkpoint_commits = mergedCheckpoints;
+        changed = true;
+      }
+
+      return changed;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logOrchestratorEvent(orchLog, "worker.state.read_error", { taskId, message });
@@ -412,7 +427,7 @@ export async function runProject(
     const taskState = state.tasks[taskId];
     const meta = resolveTaskMeta(task);
 
-    await syncThreadIdFromWorkerState(taskId, meta.workspace);
+    await syncWorkerStateIntoTask(taskId, meta.workspace);
 
     if (!useDocker || !docker) {
       const reason = "Docker unavailable on resume; resetting running task to pending";
@@ -488,7 +503,7 @@ export async function runProject(
         await removeContainer(container);
       }
 
-      await syncThreadIdFromWorkerState(taskId, meta.workspace);
+      await syncWorkerStateIntoTask(taskId, meta.workspace);
 
       if (waited.exitCode === 0) {
         return {
@@ -853,7 +868,7 @@ export async function runProject(
         await fse.remove(destTasksDir);
         await fse.copy(srcTasksDir, destTasksDir);
 
-        await syncThreadIdFromWorkerState(taskId, workspace);
+        await syncWorkerStateIntoTask(taskId, workspace);
 
         // Prepare per-task logger.
         const taskEvents = new JsonlLogger(
@@ -910,6 +925,7 @@ export async function runProject(
               DOCTOR_CMD: task.manifest.verify?.doctor ?? config.doctor,
               DOCTOR_TIMEOUT: config.doctor_timeout ? String(config.doctor_timeout) : undefined,
               MAX_RETRIES: String(config.max_retries),
+              CHECKPOINT_COMMITS: config.worker.checkpoint_commits ? "true" : "false",
               BOOTSTRAP_CMDS:
                 config.bootstrap.length > 0 ? JSON.stringify(config.bootstrap) : undefined,
               CODEX_MODEL: config.worker.model,
@@ -962,7 +978,7 @@ export async function runProject(
               await removeContainer(container);
             }
 
-            await syncThreadIdFromWorkerState(taskId, workspace);
+            await syncWorkerStateIntoTask(taskId, workspace);
 
             if (waited.exitCode === 0) {
               return {
@@ -1021,12 +1037,13 @@ export async function runProject(
               runLogsDir: tLogsDir,
               codexHome,
               codexModel: config.worker.model,
+              checkpointCommits: config.worker.checkpoint_commits,
               workingDirectory: workspace,
             },
             workerLogger,
           );
           logOrchestratorEvent(orchLog, "worker.local.complete", { taskId });
-          await syncThreadIdFromWorkerState(taskId, workspace);
+          await syncWorkerStateIntoTask(taskId, workspace);
           return {
             taskId,
             taskSlug,
@@ -1038,7 +1055,7 @@ export async function runProject(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logOrchestratorEvent(orchLog, "worker.local.error", { taskId, message });
-          await syncThreadIdFromWorkerState(taskId, workspace);
+          await syncWorkerStateIntoTask(taskId, workspace);
           return {
             taskId,
             taskSlug,
@@ -1087,6 +1104,37 @@ function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set
       .map(([id]) => id),
   );
   return { completed, failed };
+}
+
+export function mergeCheckpointCommits(
+  existing: CheckpointCommit[],
+  incoming: WorkerCheckpoint[],
+): CheckpointCommit[] {
+  const byAttempt = new Map<number, CheckpointCommit>();
+
+  for (const entry of existing) {
+    byAttempt.set(entry.attempt, { ...entry });
+  }
+  for (const entry of incoming) {
+    byAttempt.set(entry.attempt, {
+      attempt: entry.attempt,
+      sha: entry.sha,
+      created_at: entry.created_at,
+    });
+  }
+
+  return Array.from(byAttempt.values()).sort((a, b) => a.attempt - b.attempt);
+}
+
+export function checkpointListsEqual(a: CheckpointCommit[], b: CheckpointCommit[]): boolean {
+  if (a.length !== b.length) return false;
+
+  return a.every(
+    (entry, idx) =>
+      entry.attempt === b[idx].attempt &&
+      entry.sha === b[idx].sha &&
+      entry.created_at === b[idx].created_at,
+  );
 }
 
 function firstContainerName(names?: string[]): string | undefined {
