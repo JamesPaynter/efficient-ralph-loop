@@ -13,7 +13,7 @@ import {
   findContainerByName,
 } from "../docker/docker.js";
 import { buildWorkerImage } from "../docker/image.js";
-import { streamContainerLogs } from "../docker/streams.js";
+import { streamContainerLogs, type LogStreamHandle } from "../docker/streams.js";
 import { ensureCleanWorkingTree, checkout } from "../git/git.js";
 import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
@@ -45,7 +45,7 @@ import {
   createRunState,
   markTaskComplete,
   markTaskFailed,
-  resetRunningTasks,
+  resetTaskToPending,
   startBatch,
   type RunState,
 } from "./state.js";
@@ -75,24 +75,27 @@ export type BatchPlanEntry = {
 
 export type RunResult = { runId: string; state: RunState; plan: BatchPlanEntry[] };
 
-type TaskRunResult =
-  | {
-      success: true;
-      taskId: string;
-      taskSlug: string;
-      branchName: string;
-      workspace: string;
-      logsDir: string;
-    }
-  | {
-      success: false;
-      taskId: string;
-      taskSlug: string;
-      branchName: string;
-      workspace: string;
-      logsDir: string;
-      errorMessage?: string;
-    };
+type TaskSuccessResult = {
+  success: true;
+  taskId: string;
+  taskSlug: string;
+  branchName: string;
+  workspace: string;
+  logsDir: string;
+};
+
+type TaskFailureResult = {
+  success: false;
+  taskId: string;
+  taskSlug: string;
+  branchName: string;
+  workspace: string;
+  logsDir: string;
+  errorMessage?: string;
+  resetToPending?: boolean;
+};
+
+type TaskRunResult = TaskSuccessResult | TaskFailureResult;
 
 export async function runProject(
   projectName: string,
@@ -241,18 +244,6 @@ export async function runProject(
       return { runId, state, plan: plannedBatches };
     }
 
-    const runningTasks = Object.entries(state.tasks)
-      .filter(([, t]) => t.status === "running")
-      .map(([id]) => id);
-
-    const resetReason = "Resuming run: resetting in-flight tasks";
-    if (runningTasks.length > 0) {
-      resetRunningTasks(state, resetReason);
-      for (const taskId of runningTasks) {
-        logTaskReset(orchLog, taskId, resetReason);
-      }
-    }
-
     // Ensure new tasks found in the manifest are tracked for this run.
     for (const t of tasks) {
       if (!state.tasks[t.manifest.id]) {
@@ -261,10 +252,11 @@ export async function runProject(
     }
     await stateStore.save(state);
 
+    const runningTasks = Object.values(state.tasks).filter((t) => t.status === "running").length;
     logRunResume(orchLog, {
       status: state.status,
       reason: runResumeReason,
-      resetTasks: runningTasks.length,
+      runningTasks,
     });
   } else {
     if (isResume) {
@@ -283,24 +275,462 @@ export async function runProject(
     await stateStore.save(state);
   }
 
-  // Main loop
-  const completed = new Set<string>(
-    Object.entries(state.tasks)
-      .filter(([, s]) => s.status === "complete" || s.status === "skipped")
-      .map(([id]) => id),
-  );
-  const failed = new Set<string>(
-    Object.entries(state.tasks)
-      .filter(([, s]) => s.status === "failed")
-      .map(([id]) => id),
-  );
+  // Main loop helpers
+  let { completed, failed } = buildStatusSets(state);
   const doctorValidatorRunEvery = doctorValidatorConfig?.run_every_n_tasks;
   let doctorValidatorLastCount = completed.size + failed.size;
   let lastIntegrationDoctorOutput: string | undefined;
   let lastIntegrationDoctorExitCode: number | undefined;
 
+  const refreshStatusSets = (): void => {
+    const sets = buildStatusSets(state);
+    completed = sets.completed;
+    failed = sets.failed;
+  };
+
+  const findRunningBatch = (): (typeof state.batches)[number] | null => {
+    const activeBatch = state.batches.find((b) => b.status === "running");
+    if (activeBatch) return activeBatch;
+
+    const runningTaskEntry = Object.entries(state.tasks).find(([, t]) => t.status === "running");
+    if (!runningTaskEntry) return null;
+
+    const batchId = state.tasks[runningTaskEntry[0]].batch_id;
+    if (batchId === undefined) return null;
+
+    return state.batches.find((b) => b.batch_id === batchId) ?? null;
+  };
+
+  const resolveTaskMeta = (
+    task: TaskSpec,
+  ): { branchName: string; workspace: string; logsDir: string } => {
+    const taskId = task.manifest.id;
+    const taskState = state.tasks[taskId];
+    if (!taskState) {
+      throw new Error(`Unknown task in state: ${taskId}`);
+    }
+
+    const branchName =
+      taskState.branch ??
+      buildTaskBranchName(config.task_branch_prefix, taskId, task.manifest.name);
+    const workspace = taskState.workspace ?? taskWorkspaceDir(projectName, runId, taskId);
+    const logsDir = taskState.logs_dir ?? taskLogsDir(projectName, runId, taskId, task.slug);
+
+    taskState.branch = branchName;
+    taskState.workspace = workspace;
+    taskState.logs_dir = logsDir;
+
+    return { branchName, workspace, logsDir };
+  };
+
+  const buildSuccessfulTaskSummaries = (batchTasks: TaskSpec[]): TaskSuccessResult[] => {
+    const summaries: TaskSuccessResult[] = [];
+    for (const task of batchTasks) {
+      const taskState = state.tasks[task.manifest.id];
+      if (!taskState || taskState.status !== "complete") continue;
+
+      const meta = resolveTaskMeta(task);
+      summaries.push({
+        success: true,
+        taskId: task.manifest.id,
+        taskSlug: task.slug,
+        branchName: meta.branchName,
+        workspace: meta.workspace,
+        logsDir: meta.logsDir,
+      });
+    }
+    return summaries;
+  };
+
+  const findTaskContainer = async (
+    taskId: string,
+    containerIdHint?: string,
+  ): Promise<{ id: string; name?: string } | null> => {
+    if (!docker) return null;
+
+    const containers = await docker.listContainers({
+      all: true,
+      filters: {
+        label: [
+          `task-orchestrator.project=${projectName}`,
+          `task-orchestrator.run_id=${runId}`,
+        ],
+      },
+    });
+
+    const byTask = containers.find((c) => c.Labels?.["task-orchestrator.task_id"] === taskId);
+    if (byTask) {
+      return { id: byTask.Id, name: firstContainerName(byTask.Names) };
+    }
+
+    if (containerIdHint) {
+      const byId = containers.find(
+        (c) => c.Id === containerIdHint || c.Id.startsWith(containerIdHint),
+      );
+      if (byId) {
+        return { id: byId.Id, name: firstContainerName(byId.Names) };
+      }
+
+      try {
+        const inspected = await docker.getContainer(containerIdHint).inspect();
+        return {
+          id: inspected.Id ?? containerIdHint,
+          name: firstContainerName([inspected.Name]),
+        };
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
+  };
+
+  async function resumeRunningTask(task: TaskSpec): Promise<TaskRunResult> {
+    const taskId = task.manifest.id;
+    const taskState = state.tasks[taskId];
+    const meta = resolveTaskMeta(task);
+
+    if (!useDocker || !docker) {
+      const reason = "Docker unavailable on resume; resetting running task to pending";
+      logTaskReset(orchLog, taskId, reason);
+      return {
+        success: false,
+        taskId,
+        taskSlug: task.slug,
+        branchName: meta.branchName,
+        workspace: meta.workspace,
+        logsDir: meta.logsDir,
+        errorMessage: reason,
+        resetToPending: true,
+      };
+    }
+
+    const containerInfo = await findTaskContainer(taskId, taskState?.container_id);
+    if (!containerInfo) {
+      const reason = "Task container missing on resume";
+      const payload: Record<string, string> = { taskId };
+      if (taskState?.container_id) {
+        payload.container_id = taskState.container_id;
+      }
+      logOrchestratorEvent(orchLog, "container.missing", payload);
+      logTaskReset(orchLog, taskId, reason);
+      return {
+        success: false,
+        taskId,
+        taskSlug: task.slug,
+        branchName: meta.branchName,
+        workspace: meta.workspace,
+        logsDir: meta.logsDir,
+        errorMessage: reason,
+        resetToPending: true,
+      };
+    }
+
+    let logStream: LogStreamHandle | undefined;
+    const taskEventsPath = taskEventsLogPath(projectName, runId, taskId, task.slug);
+    await ensureDir(path.dirname(taskEventsPath));
+    const taskEvents = new JsonlLogger(taskEventsPath, { runId, taskId });
+
+    try {
+      const container = docker.getContainer(containerInfo.id);
+      const inspect = await container.inspect();
+      const isRunning = inspect.State?.Running ?? false;
+      const containerId = inspect.Id ?? containerInfo.id;
+
+      taskState.container_id = containerId;
+
+      logStream = await streamContainerLogs(container, taskEvents, {
+        fallbackType: "task.log",
+        includeHistory: true,
+        follow: true,
+      });
+
+      logOrchestratorEvent(orchLog, "container.reattach", {
+        taskId,
+        container_id: containerId,
+        ...(containerInfo.name ? { name: containerInfo.name } : {}),
+        running: isRunning,
+      });
+
+      const waited = await waitContainer(container);
+
+      logOrchestratorEvent(
+        orchLog,
+        isRunning ? "container.exit" : "container.exited-on-resume",
+        { taskId, container_id: containerId, exit_code: waited.exitCode },
+      );
+
+      if (cleanupOnSuccess && waited.exitCode === 0) {
+        await removeContainer(container);
+      }
+
+      if (waited.exitCode === 0) {
+        return {
+          success: true,
+          taskId,
+          taskSlug: task.slug,
+          branchName: meta.branchName,
+          workspace: meta.workspace,
+          logsDir: meta.logsDir,
+        };
+      }
+
+      return {
+        success: false,
+        taskId,
+        taskSlug: task.slug,
+        branchName: meta.branchName,
+        workspace: meta.workspace,
+        logsDir: meta.logsDir,
+        errorMessage: `Task worker container exited with code ${waited.exitCode}`,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logTaskReset(orchLog, taskId, message);
+      return {
+        success: false,
+        taskId,
+        taskSlug: task.slug,
+        branchName: meta.branchName,
+        workspace: meta.workspace,
+        logsDir: meta.logsDir,
+        errorMessage: message,
+        resetToPending: true,
+      };
+    } finally {
+      if (logStream) {
+        try {
+          await logStream.completed.catch(() => undefined);
+          logStream.detach();
+        } catch {
+          // ignore
+        }
+      }
+      taskEvents.close();
+    }
+  }
+
+  async function finalizeBatch(params: {
+    batchId: number;
+    batchTasks: TaskSpec[];
+    results: TaskRunResult[];
+  }): Promise<"merge_conflict" | "integration_doctor_failed" | undefined> {
+    const hadPendingResets = params.results.some((r) => !r.success && r.resetToPending);
+    for (const r of params.results) {
+      if (r.success) {
+        markTaskComplete(state, r.taskId);
+        logOrchestratorEvent(orchLog, "task.complete", {
+          taskId: r.taskId,
+          attempts: state.tasks[r.taskId].attempts,
+        });
+      } else if (r.resetToPending) {
+        const reason = r.errorMessage ?? "Task reset to pending";
+        resetTaskToPending(state, r.taskId, reason);
+        logTaskReset(orchLog, r.taskId, reason);
+      } else {
+        const errorMessage = r.errorMessage ?? "Task worker exited with a non-zero status";
+        markTaskFailed(state, r.taskId, errorMessage);
+        logOrchestratorEvent(orchLog, "task.failed", {
+          taskId: r.taskId,
+          attempts: state.tasks[r.taskId].attempts,
+          message: errorMessage,
+        });
+      }
+    }
+
+    await stateStore.save(state);
+    refreshStatusSets();
+
+    const successfulTasks = buildSuccessfulTaskSummaries(params.batchTasks);
+
+    if (testValidatorEnabled && testValidatorConfig) {
+      for (const r of successfulTasks) {
+        const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
+        if (!taskSpec) continue;
+
+        await runTestValidator({
+          projectName,
+          repoPath,
+          runId,
+          task: taskSpec,
+          taskSlug: r.taskSlug,
+          workspacePath: r.workspace,
+          taskLogsDir: r.logsDir,
+          mainBranch: config.main_branch,
+          config: testValidatorConfig,
+          orchestratorLog: orchLog,
+          logger: testValidatorLog ?? undefined,
+        }).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logOrchestratorEvent(orchLog, "validator.error", {
+            validator: "test",
+            taskId: r.taskId,
+            message,
+          });
+        });
+      }
+    }
+
+    let batchMergeCommit: string | undefined;
+    let integrationDoctorPassed: boolean | undefined;
+    let stopReason: "merge_conflict" | "integration_doctor_failed" | undefined;
+
+    if (successfulTasks.length > 0) {
+      logOrchestratorEvent(orchLog, "batch.merging", {
+        batch_id: params.batchId,
+        tasks: successfulTasks.map((r) => r.taskId),
+      });
+
+      const mergeResult = await mergeTaskBranches({
+        repoPath,
+        mainBranch: config.main_branch,
+        branches: successfulTasks.map((r) => ({
+          taskId: r.taskId,
+          branchName: r.branchName,
+          workspacePath: r.workspace,
+        })),
+      });
+
+      if (mergeResult.status === "conflict") {
+        batchMergeCommit = mergeResult.mergeCommit;
+        logOrchestratorEvent(orchLog, "batch.merge_conflict", {
+          batch_id: params.batchId,
+          task_id: mergeResult.conflict.taskId,
+          branch: mergeResult.conflict.branchName,
+          message: mergeResult.message,
+        });
+        state.status = "failed";
+        stopReason = "merge_conflict";
+      } else {
+        batchMergeCommit = mergeResult.mergeCommit;
+
+        logOrchestratorEvent(orchLog, "doctor.integration.start", {
+          batch_id: params.batchId,
+          command: config.doctor,
+        });
+        const doctorRes = await execaCommand(config.doctor, {
+          cwd: repoPath,
+          shell: true,
+          reject: false,
+          timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
+        });
+        lastIntegrationDoctorOutput = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
+        const doctorExitCode = doctorRes.exitCode ?? -1;
+        lastIntegrationDoctorExitCode = doctorExitCode;
+        const doctorOk = doctorExitCode === 0;
+        logOrchestratorEvent(
+          orchLog,
+          doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
+          {
+            batch_id: params.batchId,
+            exit_code: doctorExitCode,
+          },
+        );
+        integrationDoctorPassed = doctorOk;
+
+        if (!doctorOk) {
+          state.status = "failed";
+          stopReason = "integration_doctor_failed";
+        }
+      }
+    }
+
+    const failedTaskIds = params.batchTasks
+      .map((t) => t.manifest.id)
+      .filter((id) => state.tasks[id]?.status === "failed");
+    const pendingTaskIds = params.batchTasks
+      .map((t) => t.manifest.id)
+      .filter((id) => state.tasks[id]?.status === "pending");
+    const batchStatus: "complete" | "failed" =
+      failedTaskIds.length > 0 ||
+      pendingTaskIds.length > 0 ||
+      hadPendingResets ||
+      stopReason
+        ? "failed"
+        : "complete";
+
+    completeBatch(state, params.batchId, batchStatus, {
+      mergeCommit: batchMergeCommit,
+      integrationDoctorPassed,
+    });
+    await stateStore.save(state);
+
+    const finishedCount = completed.size + failed.size;
+    const shouldRunDoctorValidatorCadence =
+      doctorValidatorEnabled &&
+      doctorValidatorConfig &&
+      doctorValidatorRunEvery !== undefined &&
+      finishedCount - doctorValidatorLastCount >= doctorValidatorRunEvery;
+    const shouldRunDoctorValidatorSuspicious =
+      doctorValidatorEnabled && doctorValidatorConfig && integrationDoctorPassed === false;
+
+    if (
+      doctorValidatorEnabled &&
+      doctorValidatorConfig &&
+      (shouldRunDoctorValidatorCadence || shouldRunDoctorValidatorSuspicious)
+    ) {
+      const trigger = shouldRunDoctorValidatorSuspicious ? "integration_doctor_failed" : "cadence";
+      const triggerNotes = shouldRunDoctorValidatorSuspicious
+        ? `Integration doctor failed for batch ${params.batchId} (exit code ${lastIntegrationDoctorExitCode ?? -1})`
+        : `Cadence reached after ${finishedCount} tasks (interval ${doctorValidatorRunEvery})`;
+
+      await runDoctorValidator({
+        projectName,
+        repoPath,
+        runId,
+        mainBranch: config.main_branch,
+        doctorCommand: config.doctor,
+        trigger,
+        triggerNotes,
+        integrationDoctorOutput:
+          trigger === "integration_doctor_failed" ? lastIntegrationDoctorOutput : undefined,
+        config: doctorValidatorConfig,
+        orchestratorLog: orchLog,
+        logger: doctorValidatorLog ?? undefined,
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logOrchestratorEvent(orchLog, "validator.error", {
+          validator: "doctor",
+          message,
+        });
+      });
+
+      doctorValidatorLastCount = finishedCount;
+    }
+
+    logOrchestratorEvent(orchLog, "batch.complete", { batch_id: params.batchId });
+    return stopReason;
+  }
+
   let batchId = Math.max(0, ...state.batches.map((b) => b.batch_id));
   while (true) {
+    const runningBatch = findRunningBatch();
+    if (runningBatch) {
+      const batchTasks = tasks.filter((t) => runningBatch.tasks.includes(t.manifest.id));
+      if (batchTasks.length === 0) {
+        state.status = "failed";
+        await stateStore.save(state);
+        logOrchestratorEvent(orchLog, "run.stop", { reason: "running_batch_missing_tasks" });
+        break;
+      }
+
+      const runningTasks = batchTasks.filter(
+        (t) => state.tasks[t.manifest.id]?.status === "running",
+      );
+      const results = await Promise.all(runningTasks.map((task) => resumeRunningTask(task)));
+      const stopReason = await finalizeBatch({
+        batchId: runningBatch.batch_id,
+        batchTasks,
+        results,
+      });
+
+      if (stopReason) {
+        logOrchestratorEvent(orchLog, "run.stop", { reason: stopReason });
+        break;
+      }
+      continue;
+    }
+
     const pendingTasks = tasks.filter((t) => state.tasks[t.manifest.id]?.status === "pending");
     if (pendingTasks.length === 0) break;
 
@@ -462,6 +892,8 @@ export async function runProject(
               "task-orchestrator.project": projectName,
               "task-orchestrator.run_id": runId,
               "task-orchestrator.task_id": taskId,
+              "task-orchestrator.branch": branchName,
+              "task-orchestrator.workspace_path": workspace,
             },
           });
 
@@ -477,47 +909,51 @@ export async function runProject(
           });
 
           // Attach log stream
-          const detach = await streamContainerLogs(container, taskEvents, {
+          const logStream = await streamContainerLogs(container, taskEvents, {
             fallbackType: "task.log",
           });
 
-          await startContainer(container);
-          logOrchestratorEvent(orchLog, "container.start", { taskId, container_id: containerId });
+          try {
+            await startContainer(container);
+            logOrchestratorEvent(orchLog, "container.start", { taskId, container_id: containerId });
 
-          const waited = await waitContainer(container);
-          detach();
-          taskEvents.close();
+            const waited = await waitContainer(container);
 
-          logOrchestratorEvent(orchLog, "container.exit", {
-            taskId,
-            container_id: containerId,
-            exit_code: waited.exitCode,
-          });
+            logOrchestratorEvent(orchLog, "container.exit", {
+              taskId,
+              container_id: containerId,
+              exit_code: waited.exitCode,
+            });
 
-          if (cleanupOnSuccess && waited.exitCode === 0) {
-            await removeContainer(container);
-          }
+            if (cleanupOnSuccess && waited.exitCode === 0) {
+              await removeContainer(container);
+            }
 
-          if (waited.exitCode === 0) {
+            if (waited.exitCode === 0) {
+              return {
+                taskId,
+                taskSlug,
+                branchName,
+                workspace,
+                logsDir: tLogsDir,
+                success: true as const,
+              };
+            }
+
             return {
               taskId,
               taskSlug,
               branchName,
               workspace,
               logsDir: tLogsDir,
-              success: true as const,
+              errorMessage: `Task worker container exited with code ${waited.exitCode}`,
+              success: false as const,
             };
+          } finally {
+            await logStream.completed.catch(() => undefined);
+            logStream.detach();
+            taskEvents.close();
           }
-
-          return {
-            taskId,
-            taskSlug,
-            branchName,
-            workspace,
-            logsDir: tLogsDir,
-            errorMessage: `Task worker container exited with code ${waited.exitCode}`,
-            success: false as const,
-          };
         }
 
         logOrchestratorEvent(orchLog, "worker.local.start", { taskId, workspace });
@@ -581,180 +1017,7 @@ export async function runProject(
       }),
     );
 
-    // Update task statuses
-    for (const r of results) {
-      if (r.success) {
-        markTaskComplete(state, r.taskId);
-        completed.add(r.taskId);
-        logOrchestratorEvent(orchLog, "task.complete", {
-          taskId: r.taskId,
-          attempts: state.tasks[r.taskId].attempts,
-        });
-      } else {
-        const errorMessage =
-          r.errorMessage ?? "Task worker exited with a non-zero status";
-        markTaskFailed(state, r.taskId, errorMessage);
-        failed.add(r.taskId);
-        logOrchestratorEvent(orchLog, "task.failed", {
-          taskId: r.taskId,
-          attempts: state.tasks[r.taskId].attempts,
-          message: errorMessage,
-        });
-      }
-    }
-
-    await stateStore.save(state);
-
-    if (testValidatorEnabled && testValidatorConfig) {
-      const successfulTasks = results.filter((r) => r.success);
-      for (const r of successfulTasks) {
-        const taskSpec = tasks.find((t) => t.manifest.id === r.taskId);
-        if (!taskSpec) continue;
-
-        await runTestValidator({
-          projectName,
-          repoPath,
-          runId,
-          task: taskSpec,
-          taskSlug: r.taskSlug,
-          workspacePath: r.workspace,
-          taskLogsDir: r.logsDir,
-          mainBranch: config.main_branch,
-          config: testValidatorConfig,
-          orchestratorLog: orchLog,
-          logger: testValidatorLog ?? undefined,
-        }).catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          logOrchestratorEvent(orchLog, "validator.error", {
-            validator: "test",
-            taskId: r.taskId,
-            message,
-          });
-        });
-      }
-    }
-
-    let batchMergeCommit: string | undefined;
-    let integrationDoctorPassed: boolean | undefined;
-    let stopReason: "merge_conflict" | "integration_doctor_failed" | undefined;
-
-    // Merge successful tasks sequentially into integration branch.
-    const toMerge = results.filter((r) => r.success);
-    if (toMerge.length > 0) {
-      logOrchestratorEvent(orchLog, "batch.merging", {
-        batch_id: batchId,
-        tasks: toMerge.map((r) => r.taskId),
-      });
-
-      const mergeResult = await mergeTaskBranches({
-        repoPath,
-        mainBranch: config.main_branch,
-        branches: toMerge.map((r) => ({
-          taskId: r.taskId,
-          branchName: r.branchName,
-          workspacePath: r.workspace,
-        })),
-      });
-
-      if (mergeResult.status === "conflict") {
-        batchMergeCommit = mergeResult.mergeCommit;
-        logOrchestratorEvent(orchLog, "batch.merge_conflict", {
-          batch_id: batchId,
-          task_id: mergeResult.conflict.taskId,
-          branch: mergeResult.conflict.branchName,
-          message: mergeResult.message,
-        });
-        state.status = "failed";
-        stopReason = "merge_conflict";
-      } else {
-        batchMergeCommit = mergeResult.mergeCommit;
-
-        // Integration doctor
-        logOrchestratorEvent(orchLog, "doctor.integration.start", {
-          batch_id: batchId,
-          command: config.doctor,
-        });
-        const doctorRes = await execaCommand(config.doctor, {
-          cwd: repoPath,
-          shell: true,
-          reject: false,
-          timeout: config.doctor_timeout ? config.doctor_timeout * 1000 : undefined,
-        });
-        lastIntegrationDoctorOutput = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
-        const doctorExitCode = doctorRes.exitCode ?? -1;
-        lastIntegrationDoctorExitCode = doctorExitCode;
-        const doctorOk = doctorExitCode === 0;
-        logOrchestratorEvent(
-          orchLog,
-          doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
-          {
-            batch_id: batchId,
-            exit_code: doctorExitCode,
-          },
-        );
-        integrationDoctorPassed = doctorOk;
-
-        if (!doctorOk) {
-          // Mark run failed but still record what happened.
-          state.status = "failed";
-          stopReason = "integration_doctor_failed";
-        }
-      }
-    }
-
-    // Mark batch complete
-    const batchStatus: "complete" | "failed" =
-      failed.size > 0 || stopReason ? "failed" : "complete";
-    completeBatch(state, batchId, batchStatus, {
-      mergeCommit: batchMergeCommit,
-      integrationDoctorPassed,
-    });
-    await stateStore.save(state);
-
-    const finishedCount = completed.size + failed.size;
-    const shouldRunDoctorValidatorCadence =
-      doctorValidatorEnabled &&
-      doctorValidatorConfig &&
-      doctorValidatorRunEvery !== undefined &&
-      finishedCount - doctorValidatorLastCount >= doctorValidatorRunEvery;
-    const shouldRunDoctorValidatorSuspicious =
-      doctorValidatorEnabled && doctorValidatorConfig && integrationDoctorPassed === false;
-
-    if (
-      doctorValidatorEnabled &&
-      doctorValidatorConfig &&
-      (shouldRunDoctorValidatorCadence || shouldRunDoctorValidatorSuspicious)
-    ) {
-      const trigger = shouldRunDoctorValidatorSuspicious ? "integration_doctor_failed" : "cadence";
-      const triggerNotes = shouldRunDoctorValidatorSuspicious
-        ? `Integration doctor failed for batch ${batchId} (exit code ${lastIntegrationDoctorExitCode ?? -1})`
-        : `Cadence reached after ${finishedCount} tasks (interval ${doctorValidatorRunEvery})`;
-
-      await runDoctorValidator({
-        projectName,
-        repoPath,
-        runId,
-        mainBranch: config.main_branch,
-        doctorCommand: config.doctor,
-        trigger,
-        triggerNotes,
-        integrationDoctorOutput:
-          trigger === "integration_doctor_failed" ? lastIntegrationDoctorOutput : undefined,
-        config: doctorValidatorConfig,
-        orchestratorLog: orchLog,
-        logger: doctorValidatorLog ?? undefined,
-      }).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        logOrchestratorEvent(orchLog, "validator.error", {
-          validator: "doctor",
-          message,
-        });
-      });
-
-      doctorValidatorLastCount = finishedCount;
-    }
-
-    logOrchestratorEvent(orchLog, "batch.complete", { batch_id: batchId });
+    const stopReason = await finalizeBatch({ batchId, batchTasks: batch.tasks, results });
 
     if (stopReason) {
       logOrchestratorEvent(orchLog, "run.stop", { reason: stopReason });
@@ -773,6 +1036,26 @@ export async function runProject(
 
   // Optional cleanup of successful workspaces can be added later.
   return { runId, state, plan: plannedBatches };
+}
+
+function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set<string> } {
+  const completed = new Set<string>(
+    Object.entries(state.tasks)
+      .filter(([, s]) => s.status === "complete" || s.status === "skipped")
+      .map(([id]) => id),
+  );
+  const failed = new Set<string>(
+    Object.entries(state.tasks)
+      .filter(([, s]) => s.status === "failed")
+      .map(([id]) => id),
+  );
+  return { completed, failed };
+}
+
+function firstContainerName(names?: string[]): string | undefined {
+  if (!names || names.length === 0) return undefined;
+  const raw = names[0] ?? "";
+  return raw.startsWith("/") ? raw.slice(1) : raw;
 }
 
 function createLocalWorkerLogger(

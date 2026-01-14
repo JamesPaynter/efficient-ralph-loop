@@ -14,7 +14,7 @@ import {
   startContainer as startDockerContainer,
   waitContainer,
 } from "./docker.js";
-import { streamContainerLogs } from "./streams.js";
+import { streamContainerLogs, type LogStreamHandle } from "./streams.js";
 
 export type RunContainerOptions = {
   spec: ContainerSpec;
@@ -82,7 +82,7 @@ export class DockerManager {
     container: Docker.Container,
     logger: JsonlLogger,
     fallbackType?: string,
-  ): Promise<() => void> {
+  ): Promise<LogStreamHandle> {
     return streamContainerLogs(container, logger, { fallbackType });
   }
 
@@ -90,10 +90,10 @@ export class DockerManager {
     const container = await this.createContainer(opts.spec);
     const info = await container.inspect();
 
-    let detachLogs: (() => void) | undefined;
+    let logHandle: LogStreamHandle | undefined;
     try {
       if (opts.logger) {
-        detachLogs = await this.streamLogsToLogger(container, opts.logger, opts.logFallbackType);
+        logHandle = await this.streamLogsToLogger(container, opts.logger, opts.logFallbackType);
       }
 
       await this.startContainer(container);
@@ -107,9 +107,10 @@ export class DockerManager {
         containerName: info.Name,
       };
     } finally {
-      if (detachLogs) {
+      if (logHandle) {
         try {
-          detachLogs();
+          await logHandle.completed.catch(() => undefined);
+          logHandle.detach();
         } catch {
           // ignore
         }

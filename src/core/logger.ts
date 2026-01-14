@@ -119,11 +119,12 @@ export function logOrchestratorEvent(
 
 export function logRunResume(
   logger: JsonlLogger,
-  details: { status: string; reason?: string; resetTasks?: number },
+  details: { status: string; reason?: string; resetTasks?: number; runningTasks?: number },
 ): void {
   const payload: JsonObject = { status: details.status };
   if (details.reason) payload.reason = details.reason;
   if (details.resetTasks !== undefined) payload.reset_tasks = details.resetTasks;
+  if (details.runningTasks !== undefined) payload.running_tasks = details.runningTasks;
 
   logOrchestratorEvent(logger, "run.resume", payload);
 }

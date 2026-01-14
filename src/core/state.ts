@@ -206,15 +206,7 @@ export function resetRunningTasks(
   for (const task of Object.values(state.tasks)) {
     if (task.status !== "running") continue;
 
-    task.status = "pending";
-    task.batch_id = undefined;
-    task.branch = undefined;
-    task.container_id = undefined;
-    task.workspace = undefined;
-    task.logs_dir = undefined;
-    task.started_at = undefined;
-    task.completed_at = undefined;
-    task.last_error = reason;
+    applyResetToPending(state, task, reason, now);
   }
 }
 
@@ -224,4 +216,35 @@ function requireTask(state: RunState, taskId: string): TaskState {
     throw new Error(`Unknown task in state: ${taskId}`);
   }
   return task;
+}
+
+export function resetTaskToPending(
+  state: RunState,
+  taskId: string,
+  reason = "Recovered from crash: previous status was running",
+  now: string = isoNow(),
+): void {
+  const task = requireTask(state, taskId);
+  if (task.status !== "running") {
+    throw new Error(`Cannot reset task ${taskId} from status ${task.status}`);
+  }
+
+  applyResetToPending(state, task, reason, now);
+}
+
+function applyResetToPending(
+  state: RunState,
+  task: TaskState,
+  reason: string,
+  now: string,
+): void {
+  task.status = "pending";
+  task.batch_id = undefined;
+  task.branch = undefined;
+  task.container_id = undefined;
+  task.workspace = undefined;
+  task.logs_dir = undefined;
+  task.started_at = undefined;
+  task.completed_at = undefined;
+  task.last_error = reason;
 }

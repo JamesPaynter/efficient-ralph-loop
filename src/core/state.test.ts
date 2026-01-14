@@ -10,6 +10,7 @@ import {
   markTaskComplete,
   markTaskFailed,
   resetRunningTasks,
+  resetTaskToPending,
   startBatch,
 } from "./state.js";
 import {
@@ -95,6 +96,41 @@ describe("state transitions", () => {
     });
     expect(state.batches[0].status).toBe("failed");
     expect(state.batches[0].completed_at).toBe("2024-02-01T01:00:00.000Z");
+  });
+
+  it("resets a single running task without touching completed work", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-02-02T02:00:00Z"));
+
+    const state = createRunState({
+      runId: "run-3",
+      project: "demo",
+      repoPath: "/repo",
+      mainBranch: "main",
+      taskIds: ["010", "011"],
+    });
+
+    startBatch(state, { batchId: 1, taskIds: ["010", "011"] });
+    state.tasks["011"].branch = "agent/011-work";
+    state.tasks["011"].container_id = "container-xyz";
+    state.tasks["011"].workspace = "/tmp/workspace";
+    state.tasks["011"].logs_dir = "/tmp/logs";
+
+    markTaskComplete(state, "010");
+
+    vi.setSystemTime(new Date("2024-02-02T02:30:00Z"));
+    resetTaskToPending(state, "011", "container missing");
+
+    expect(state.tasks["011"]).toMatchObject({
+      status: "pending",
+      branch: undefined,
+      container_id: undefined,
+      workspace: undefined,
+      logs_dir: undefined,
+      last_error: "container missing",
+    });
+    expect(state.tasks["010"].status).toBe("complete");
+    expect(state.batches[0].status).toBe("running");
   });
 });
 
