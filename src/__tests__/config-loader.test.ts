@@ -58,6 +58,9 @@ docker:
         path.resolve(path.dirname(configPath), "./templates/Dockerfile"),
       );
       expect(config.docker.build_context).toBe(path.resolve(path.dirname(configPath), ".."));
+      expect(config.docker.user).toBe("worker");
+      expect(config.docker.network_mode).toBe("bridge");
+      expect(config.docker.memory_mb).toBeUndefined();
       expect(config.task_branch_prefix).toBe("agent/");
       expect(config.manifest_enforcement).toBe("warn");
       expect(config.test_paths.length).toBeGreaterThan(0);
@@ -133,5 +136,40 @@ worker:
     expect(message).toContain("Invalid project config");
     expect(message).toContain("max_parallel");
     expect(message).toContain("Expected number");
+  });
+
+  it("parses docker limits and network mode overrides", () => {
+    const configPath = writeConfig(
+      "limits.yaml",
+      `
+repo_path: /tmp/repo
+main_branch: development-codex
+doctor: "npm test"
+resources:
+  - name: backend
+    paths: ["server/*"]
+planner:
+  provider: openai
+  model: o3
+worker:
+  model: gpt-5.1-codex-max
+docker:
+  image: custom-worker:latest
+  network_mode: none
+  user: builder
+  memory_mb: 512
+  cpu_quota: 75000
+  pids_limit: 128
+`,
+    );
+
+    const config = loadProjectConfig(configPath);
+
+    expect(config.docker.image).toBe("custom-worker:latest");
+    expect(config.docker.user).toBe("builder");
+    expect(config.docker.network_mode).toBe("none");
+    expect(config.docker.memory_mb).toBe(512);
+    expect(config.docker.cpu_quota).toBe(75_000);
+    expect(config.docker.pids_limit).toBe(128);
   });
 });

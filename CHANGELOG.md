@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-01-15
+- Hardened worker containers with a non-root `worker` user, configurable memory/CPU/PIDs limits, optional no-network mode, and logging that records applied security settings.
 - Archived current TODO list snapshot to docs/history/todo-2026-01-15.md; backlog remains complete.
 - Added manifest compliance enforcement (git diff vs integration), `access.requested` logging, per-task compliance reports, and optional block-to-rescope handling.
 - Added validator block modes with human review queue output, linked validator reports, and a `logs summarize --task` helper.

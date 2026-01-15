@@ -57,11 +57,18 @@ const BudgetsSchema = z
   })
   .strict();
 
+const DockerNetworkModeSchema = z.enum(["bridge", "none"]);
+
 const DockerSchema = z
   .object({
     image: z.string().min(1).default("task-orchestrator-worker:latest"),
     dockerfile: z.string().default("templates/Dockerfile"),
     build_context: z.string().default("."),
+    user: z.string().min(1).default("worker"),
+    network_mode: DockerNetworkModeSchema.default("bridge"),
+    memory_mb: z.number().int().positive().optional(),
+    cpu_quota: z.number().int().positive().optional(),
+    pids_limit: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -111,5 +118,6 @@ export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
 export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
 export type ResourceConfig = z.infer<typeof ResourceSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
+export type DockerNetworkMode = z.infer<typeof DockerNetworkModeSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 export type ManifestEnforcementPolicy = z.infer<typeof ManifestEnforcementSchema>;

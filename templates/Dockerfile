@@ -49,6 +49,14 @@ RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
 
+# Create non-root user for worker processes
+RUN useradd -m -u 1000 -s /bin/bash worker \
+  && mkdir -p /workspace \
+  && chown -R worker:worker /workspace
+
+USER worker
+ENV HOME=/home/worker
+
 # Default workspace mount point
 WORKDIR /workspace
 

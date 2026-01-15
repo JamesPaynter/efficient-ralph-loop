@@ -4,6 +4,8 @@ import Docker from "dockerode";
 
 import { DockerError } from "../core/errors.js";
 
+export const DEFAULT_CPU_PERIOD = 100_000;
+
 export type ContainerSpec = {
   name: string;
   image: string;
@@ -13,6 +15,14 @@ export type ContainerSpec = {
   labels?: Record<string, string>;
   // Optional: override command
   cmd?: string[];
+  user?: string;
+  networkMode?: "bridge" | "none";
+  resources?: {
+    memoryBytes?: number;
+    cpuQuota?: number;
+    cpuPeriod?: number;
+    pidsLimit?: number;
+  };
 };
 
 export type ContainerWaitResult = { exitCode: number; status: string };
@@ -41,6 +51,23 @@ export async function createContainer(
 
     const Binds = spec.binds.map((b) => `${path.resolve(b.hostPath)}:${b.containerPath}:${b.mode}`);
 
+    const hostConfig: Docker.ContainerCreateOptions["HostConfig"] = {
+      Binds,
+      NetworkMode: spec.networkMode ?? "bridge",
+      AutoRemove: false,
+    };
+
+    if (spec.resources?.memoryBytes !== undefined) {
+      hostConfig.Memory = spec.resources.memoryBytes;
+    }
+    if (spec.resources?.cpuQuota !== undefined) {
+      hostConfig.CpuQuota = spec.resources.cpuQuota;
+      hostConfig.CpuPeriod = spec.resources.cpuPeriod ?? DEFAULT_CPU_PERIOD;
+    }
+    if (spec.resources?.pidsLimit !== undefined) {
+      hostConfig.PidsLimit = spec.resources.pidsLimit;
+    }
+
     const container = await docker.createContainer({
       Image: spec.image,
       name: spec.name,
@@ -48,11 +75,8 @@ export async function createContainer(
       WorkingDir: spec.workdir,
       Cmd: spec.cmd,
       Labels: spec.labels,
-      HostConfig: {
-        Binds,
-        NetworkMode: "bridge",
-        AutoRemove: false,
-      },
+      User: spec.user,
+      HostConfig: hostConfig,
     });
 
     return container;

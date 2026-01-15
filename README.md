@@ -125,8 +125,10 @@ task-orchestrator autopilot --project my-project
 
 ## Worker image config
 
-- Defaults: `docker.image` → `task-orchestrator-worker:latest`, `docker.dockerfile` → `templates/Dockerfile`, `docker.build_context` → `.`.
+- Defaults: `docker.image` → `task-orchestrator-worker:latest`, `docker.dockerfile` → `templates/Dockerfile`, `docker.build_context` → `.`, `docker.user` → `worker` (non-root), `docker.network_mode` → `bridge`.
 - Point `docker.image` at a prebuilt image to skip local builds, or set `docker.dockerfile`/`docker.build_context` to build from your own Dockerfile.
+- Resource/network knobs: `docker.memory_mb`, `docker.cpu_quota` (uses a 100000 CPU period), `docker.pids_limit`, and `docker.network_mode` (`bridge` or `none`).
+- For `network_mode: none`, make sure dependencies are already present (vendored or cached) or install them in `bootstrap` before Codex starts, since worker traffic will be disabled.
 - `templates/codex-config.toml` shows the flat Codex config written to `CODEX_HOME` for workers.
 
 ## Development

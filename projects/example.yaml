@@ -81,3 +81,8 @@ docker:
   image: task-orchestrator-worker:latest
   dockerfile: /absolute/path/to/task-orchestrator/templates/Dockerfile
   build_context: /absolute/path/to/task-orchestrator
+  user: worker
+  network_mode: bridge # set to "none" for offline runs when dependencies are already available
+  memory_mb: 2048
+  cpu_quota: 100000
+  pids_limit: 512

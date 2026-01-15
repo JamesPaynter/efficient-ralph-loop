@@ -11,6 +11,7 @@ import {
   removeContainer,
   imageExists,
   findContainerByName,
+  DEFAULT_CPU_PERIOD,
 } from "../docker/docker.js";
 import { buildWorkerImage } from "../docker/image.js";
 import { streamContainerLogs, type LogStreamHandle } from "../docker/streams.js";
@@ -134,6 +135,58 @@ type ValidatorRunSummary = {
   trigger?: string;
 };
 
+type ContainerResourceLimits = {
+  memoryBytes?: number;
+  cpuQuota?: number;
+  cpuPeriod?: number;
+  pidsLimit?: number;
+};
+
+function buildContainerResources(config: ProjectConfig["docker"]): ContainerResourceLimits | undefined {
+  const memoryBytes =
+    config.memory_mb !== undefined ? Math.trunc(config.memory_mb * 1024 * 1024) : undefined;
+  const cpuQuota = config.cpu_quota;
+  const pidsLimit = config.pids_limit;
+
+  if (memoryBytes === undefined && cpuQuota === undefined && pidsLimit === undefined) {
+    return undefined;
+  }
+
+  const limits: ContainerResourceLimits = {};
+  if (memoryBytes !== undefined) {
+    limits.memoryBytes = memoryBytes;
+  }
+  if (cpuQuota !== undefined) {
+    limits.cpuQuota = cpuQuota;
+    limits.cpuPeriod = DEFAULT_CPU_PERIOD;
+  }
+  if (pidsLimit !== undefined) {
+    limits.pidsLimit = pidsLimit;
+  }
+
+  return limits;
+}
+
+function buildContainerSecurityPayload(config: ProjectConfig["docker"]): JsonObject {
+  const payload: JsonObject = {
+    user: config.user,
+    network_mode: config.network_mode,
+  };
+
+  if (config.memory_mb !== undefined) {
+    payload.memory_mb = config.memory_mb;
+  }
+  if (config.cpu_quota !== undefined) {
+    payload.cpu_quota = config.cpu_quota;
+    payload.cpu_period = DEFAULT_CPU_PERIOD;
+  }
+  if (config.pids_limit !== undefined) {
+    payload.pids_limit = config.pids_limit;
+  }
+
+  return payload;
+}
+
 export async function runProject(
   projectName: string,
   config: ProjectConfig,
@@ -158,6 +211,10 @@ export async function runProject(
 
   const repoPath = config.repo_path;
   const workerImage = config.docker.image;
+  const containerResources = buildContainerResources(config.docker);
+  const containerSecurityPayload = buildContainerSecurityPayload(config.docker);
+  const networkMode = config.docker.network_mode;
+  const containerUser = config.docker.user;
   const docker = useDocker ? dockerClient() : null;
   const manifestPolicy: ManifestEnforcementPolicy = config.manifest_enforcement ?? "warn";
   const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
@@ -1441,6 +1498,7 @@ export async function runProject(
           const container = await createContainer(docker, {
             name: containerName,
             image: workerImage,
+            user: containerUser,
             env: {
               // Credentials / routing (passed through from the host).
               CODEX_API_KEY: process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY,
@@ -1479,6 +1537,8 @@ export async function runProject(
               { hostPath: tLogsDir, containerPath: "/run-logs", mode: "rw" },
             ],
             workdir: "/workspace",
+            networkMode,
+            resources: containerResources,
             labels: {
               "task-orchestrator.project": projectName,
               "task-orchestrator.run_id": runId,
@@ -1497,6 +1557,7 @@ export async function runProject(
             taskId,
             container_id: containerId,
             name: containerName,
+            security: containerSecurityPayload,
           });
 
           // Attach log stream
