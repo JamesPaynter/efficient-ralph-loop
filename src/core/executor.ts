@@ -86,6 +86,7 @@ import type { WorkerLogger, WorkerLogEventInput } from "../../worker/logging.js"
 import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
 import { runManifestCompliance, type ManifestComplianceResult } from "./manifest-compliance.js";
 import { computeRescopeFromCompliance } from "./manifest-rescope.js";
+import { isMockLlmEnabled } from "../llm/mock.js";
 
 export type RunOptions = {
   runId?: string;
@@ -218,6 +219,7 @@ export async function runProject(
   const docker = useDocker ? dockerClient() : null;
   const manifestPolicy: ManifestEnforcementPolicy = config.manifest_enforcement ?? "warn";
   const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
+  const mockLlmMode = isMockLlmEnabled() || config.worker.model === "mock";
 
   // Prepare directories
   await ensureDir(orchestratorHome());
@@ -1426,24 +1428,9 @@ export async function runProject(
         const workspace = taskWorkspaceDir(projectName, runId, taskId);
         const tLogsDir = taskLogsDir(projectName, runId, taskId, taskSlug);
         const codexHome = workerCodexHomeDir(projectName, runId, taskId, taskSlug);
+        const codexConfigPath = path.join(codexHome, "config.toml");
 
         await ensureDir(tLogsDir);
-        await ensureDir(codexHome);
-        await writeCodexConfig(path.join(codexHome, "config.toml"), {
-          model: config.worker.model,
-          // "never" means no approval prompts (unattended runs). See Codex config reference.
-          approvalPolicy: "never",
-          sandboxMode: "danger-full-access",
-        });
-        // If the user authenticated via `codex login`, auth material typically lives under
-        // ~/.codex/auth.json (file-based storage). Because we run each worker with a custom
-        // CODEX_HOME, we copy that auth file into this per-task CODEX_HOME when no API key is provided.
-        const auth = await ensureCodexAuthForHome(codexHome);
-        logOrchestratorEvent(orchLog, "codex.auth", {
-          taskId,
-          mode: auth.mode,
-          source: auth.mode === "env" ? auth.var : "auth.json",
-        });
 
         logOrchestratorEvent(orchLog, "workspace.prepare.start", { taskId, workspace });
         const workspacePrep = await prepareTaskWorkspace({
@@ -1459,6 +1446,31 @@ export async function runProject(
           workspace,
           created: workspacePrep.created,
         });
+
+        await ensureDir(codexHome);
+        await writeCodexConfig(codexConfigPath, {
+          model: config.worker.model,
+          // "never" means no approval prompts (unattended runs). See Codex config reference.
+          approvalPolicy: "never",
+          sandboxMode: "danger-full-access",
+        });
+        // If the user authenticated via `codex login`, auth material typically lives under
+        // ~/.codex/auth.json (file-based storage). Because we run each worker with a custom
+        // CODEX_HOME, we copy that auth file into this per-task CODEX_HOME when no API key is provided.
+        if (!mockLlmMode) {
+          const auth = await ensureCodexAuthForHome(codexHome);
+          logOrchestratorEvent(orchLog, "codex.auth", {
+            taskId,
+            mode: auth.mode,
+            source: auth.mode === "env" ? auth.var : "auth.json",
+          });
+        } else {
+          logOrchestratorEvent(orchLog, "codex.auth", {
+            taskId,
+            mode: "mock",
+            source: "MOCK_LLM",
+          });
+        }
 
         // Ensure tasks directory is available inside the clone (copy from integration repo).
         const srcTasksDir = path.join(repoPath, config.tasks_dir);

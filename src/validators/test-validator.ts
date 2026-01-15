@@ -15,6 +15,7 @@ import { LlmError } from "../llm/client.js";
 import { AnthropicClient } from "../llm/anthropic.js";
 import { OpenAiClient } from "../llm/openai.js";
 import { listChangedFiles } from "../git/changes.js";
+import { MockLlmClient, isMockLlmEnabled } from "../llm/mock.js";
 
 // =============================================================================
 // TYPES
@@ -387,6 +388,10 @@ function formatFilesForPrompt(files: FileSample[]): string {
 }
 
 function createValidatorClient(cfg: ValidatorConfig): LlmClient {
+  if (isMockLlmEnabled() || cfg.provider === "mock") {
+    return new MockLlmClient();
+  }
+
   if (cfg.provider === "openai") {
     return new OpenAiClient({
       model: cfg.model,

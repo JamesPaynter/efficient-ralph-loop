@@ -1,0 +1,32 @@
+{
+  "tasks": [
+    {
+      "id": "001",
+      "name": "doc-note",
+      "description": "Add a release notes entry for the mock run.",
+      "estimated_minutes": 5,
+      "dependencies": [],
+      "locks": { "reads": [], "writes": ["docs"] },
+      "files": { "reads": [], "writes": ["notes/release-notes.txt"] },
+      "affected_tests": [],
+      "test_paths": [],
+      "tdd_mode": "off",
+      "verify": { "doctor": "npm test" },
+      "spec": "Add a mock release note entry."
+    },
+    {
+      "id": "002",
+      "name": "feature-note",
+      "description": "Update the feature tracker with a mock update.",
+      "estimated_minutes": 5,
+      "dependencies": [],
+      "locks": { "reads": [], "writes": ["code"] },
+      "files": { "reads": [], "writes": ["src/feature.txt"] },
+      "affected_tests": [],
+      "test_paths": [],
+      "tdd_mode": "off",
+      "verify": { "doctor": "npm test" },
+      "spec": "Add a mock feature note so doctor can assert the change."
+    }
+  ]
+}

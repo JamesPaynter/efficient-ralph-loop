@@ -5,15 +5,20 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./codex.js", () => ({
-  CodexRunner: class {
+vi.mock("./codex.js", () => {
+  class MockRunner {
     threadId = "mock-thread";
 
     async streamPrompt(_input: string, handlers: any): Promise<void> {
       await handlers.onThreadStarted?.(this.threadId);
     }
-  },
-}));
+  }
+
+  return {
+    CodexRunner: MockRunner,
+    createCodexRunner: () => new MockRunner(),
+  };
+});
 
 import { runWorker } from "./loop.js";
 import { loadWorkerState, workerStatePath } from "./state.js";

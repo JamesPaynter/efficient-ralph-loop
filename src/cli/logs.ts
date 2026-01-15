@@ -28,6 +28,7 @@ import type { DoctorValidationReport } from "../validators/doctor-validator.js";
 import type { TestValidationReport } from "../validators/test-validator.js";
 import { AnthropicClient } from "../llm/anthropic.js";
 import type { LlmClient } from "../llm/client.js";
+import { MockLlmClient, isMockLlmEnabled } from "../llm/mock.js";
 import { OpenAiClient } from "../llm/openai.js";
 
 type ValidatorSummaryRow = {
@@ -780,6 +781,10 @@ function createLogSummaryClient(cfg: LogSummaryConfig): LlmClient {
   const model = cfg.model;
   if (!model) {
     throw new Error("log_summaries.model is required when using --llm.");
+  }
+
+  if (isMockLlmEnabled() || cfg.provider === "mock") {
+    return new MockLlmClient();
   }
 
   if (cfg.provider === "openai") {

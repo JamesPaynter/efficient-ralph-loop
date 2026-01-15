@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import fse from "fs-extra";
 
+import { isMockLlmEnabled } from "../llm/mock.js";
+
 export type CodexAuthProvisioned =
-  | { mode: "env"; var: "CODEX_API_KEY" | "OPENAI_API_KEY" }
+  | { mode: "env"; var: "CODEX_API_KEY" | "OPENAI_API_KEY" | "MOCK_LLM" }
   | { mode: "copied"; from: string; to: string };
 
 /**
@@ -25,6 +27,11 @@ export type CodexAuthProvisioned =
  * - We attempt to chmod the destination to 0600 on POSIX systems.
  */
 export async function ensureCodexAuthForHome(codexHome: string): Promise<CodexAuthProvisioned> {
+  if (isMockLlmEnabled()) {
+    await fse.ensureDir(codexHome);
+    return { mode: "env", var: "MOCK_LLM" };
+  }
+
   const envCodex = process.env.CODEX_API_KEY?.trim();
   if (envCodex) return { mode: "env", var: "CODEX_API_KEY" };
 

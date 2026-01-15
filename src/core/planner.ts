@@ -28,6 +28,7 @@ import {
   type LlmCompletionOptions,
   type LlmCompletionResult,
 } from "../llm/client.js";
+import { isMockLlmEnabled, MockLlmClient } from "../llm/mock.js";
 
 export type PlanResult = {
   tasks: TaskWithSpec[];
@@ -317,6 +318,10 @@ export function createPlannerClient(
   repoPath: string,
   log?: JsonlLogger,
 ): LlmClient {
+  if (isMockLlmEnabled() || cfg.provider === "mock") {
+    return new MockLlmClient();
+  }
+
   if (cfg.provider === "openai") {
     return new OpenAiClient({
       model: cfg.model,

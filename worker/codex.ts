@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   Codex,
   type ApprovalMode,
@@ -7,6 +10,8 @@ import {
   type ThreadOptions,
 } from "@openai/codex-sdk";
 
+import { isMockLlmEnabled } from "../src/llm/mock.js";
+
 export type CodexRunnerOptions = {
   codexHome: string;
   model?: string;
@@ -14,7 +19,29 @@ export type CodexRunnerOptions = {
   sandboxMode?: SandboxMode;
   approvalPolicy?: ApprovalMode;
   threadId?: string;
+  taskId?: string;
+  manifestPath?: string;
+  specPath?: string;
 };
+
+export type CodexRunnerLike = {
+  getThreadId(): string | null;
+  streamPrompt(
+    input: string,
+    handlers: {
+      onEvent: (event: ThreadEvent) => void;
+      onThreadStarted?: (threadId: string) => Promise<void> | void;
+      onThreadResumed?: (threadId: string) => Promise<void> | void;
+    },
+  ): Promise<void>;
+};
+
+export function createCodexRunner(opts: CodexRunnerOptions): CodexRunnerLike {
+  if (isMockLlmEnabled() || opts.model === "mock") {
+    return new MockCodexRunner(opts);
+  }
+  return new CodexRunner(opts);
+}
 
 export class CodexRunner {
   private thread: Thread;
@@ -71,6 +98,84 @@ export class CodexRunner {
         await handlers.onThreadStarted?.(event.thread_id);
       }
       handlers.onEvent(event);
+    }
+  }
+}
+
+class MockCodexRunner {
+  private readonly threadId: string;
+  private readonly manifestPath?: string;
+  private readonly workingDirectory: string;
+  private readonly taskId?: string;
+  private turn = 0;
+
+  constructor(opts: CodexRunnerOptions) {
+    this.threadId = opts.threadId ?? `mock-thread-${opts.taskId ?? "task"}`;
+    this.manifestPath = opts.manifestPath;
+    this.workingDirectory = opts.workingDirectory;
+    this.taskId = opts.taskId;
+  }
+
+  getThreadId(): string | null {
+    return this.threadId;
+  }
+
+  async streamPrompt(
+    input: string,
+    handlers: {
+      onEvent: (event: ThreadEvent) => void;
+      onThreadStarted?: (threadId: string) => Promise<void> | void;
+      onThreadResumed?: (threadId: string) => Promise<void> | void;
+    },
+  ): Promise<void> {
+    this.turn += 1;
+
+    if (this.turn === 1) {
+      await handlers.onThreadStarted?.(this.threadId);
+    } else {
+      await handlers.onThreadResumed?.(this.threadId);
+    }
+
+    await this.applyMockChanges(input);
+
+    const event = {
+      type: "mock.event",
+      message: `mocked codex output for ${this.taskId ?? "task"}`,
+      turn: this.turn,
+    } as unknown as ThreadEvent;
+    handlers.onEvent(event);
+  }
+
+  private async applyMockChanges(prompt: string): Promise<void> {
+    const targets = await this.resolveWriteTargets();
+    if (targets.length === 0) return;
+
+    const content = [
+      `Mock update for ${this.taskId ?? "task"} (turn ${this.turn})`,
+      prompt.slice(0, 200),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    for (const relative of targets) {
+      const fullPath = path.join(this.workingDirectory, relative);
+      await fs.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.writeFile(fullPath, `${content}\n`, "utf8");
+    }
+  }
+
+  private async resolveWriteTargets(): Promise<string[]> {
+    if (!this.manifestPath) return ["mock-output.txt"];
+
+    try {
+      const raw = await fs.readFile(this.manifestPath, "utf8");
+      const parsed = JSON.parse(raw) as { files?: { writes?: unknown } };
+      const writes = Array.isArray(parsed.files?.writes)
+        ? (parsed.files?.writes as string[])
+        : [];
+      return writes.length > 0 ? writes : ["mock-output.txt"];
+    } catch {
+      return ["mock-output.txt"];
     }
   }
 }

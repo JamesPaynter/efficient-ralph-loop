@@ -13,14 +13,22 @@ import { isoNow } from "./logging.js";
 const STATE_DIR = ".task-orchestrator";
 const STATE_FILE = "worker-state.json";
 
+const WorkerCheckpointSchema = z.object({
+  attempt: z.number().int().positive(),
+  sha: z.string(),
+  created_at: z.string(),
+});
+
 const WorkerStateSchema = z.object({
   thread_id: z.string().optional(),
   attempt: z.number().int().nonnegative(),
   created_at: z.string(),
   updated_at: z.string(),
+  checkpoints: z.array(WorkerCheckpointSchema).default([]),
 });
 
 export type WorkerState = z.infer<typeof WorkerStateSchema>;
+export type WorkerCheckpoint = z.infer<typeof WorkerCheckpointSchema>;
 
 // =============================================================================
 // PATH HELPERS
@@ -47,6 +55,10 @@ export class WorkerStateStore {
     return this.state;
   }
 
+  get checkpoints(): WorkerCheckpoint[] {
+    return this.state?.checkpoints ?? [];
+  }
+
   get threadId(): string | undefined {
     return this.state?.thread_id;
   }
@@ -68,6 +80,7 @@ export class WorkerStateStore {
       attempt,
       created_at: createdAt,
       updated_at: now,
+      checkpoints: this.state?.checkpoints ?? [],
     };
 
     await saveWorkerState(this.workingDirectory, next);
@@ -81,6 +94,7 @@ export class WorkerStateStore {
       attempt: 0,
       created_at: now,
       updated_at: now,
+      checkpoints: [],
     };
 
     if (base.thread_id === threadId) {
@@ -88,6 +102,29 @@ export class WorkerStateStore {
     }
 
     const next: WorkerState = { ...base, thread_id: threadId, updated_at: now };
+    await saveWorkerState(this.workingDirectory, next);
+    this.state = next;
+    return next;
+  }
+
+  async recordCheckpoint(attempt: number, sha: string): Promise<WorkerState> {
+    const now = isoNow();
+    const base: WorkerState = this.state ?? {
+      attempt: 0,
+      created_at: now,
+      updated_at: now,
+      checkpoints: [],
+    };
+
+    const checkpoints = (base.checkpoints ?? []).filter((c) => c.attempt !== attempt);
+    checkpoints.push({ attempt, sha, created_at: now });
+
+    const next: WorkerState = {
+      ...base,
+      attempt: Math.max(base.attempt, attempt),
+      checkpoints: checkpoints.sort((a, b) => a.attempt - b.attempt),
+      updated_at: now,
+    };
     await saveWorkerState(this.workingDirectory, next);
     this.state = next;
     return next;

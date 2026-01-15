@@ -6,7 +6,7 @@ import { DEFAULT_TEST_PATHS } from "./test-paths.js";
 // SCHEMAS
 // =============================================================================
 
-const LlmProviderSchema = z.enum(["openai", "anthropic", "codex"]);
+const LlmProviderSchema = z.enum(["openai", "anthropic", "codex", "mock"]);
 export const ValidatorModeSchema = z.enum(["off", "warn", "block"]);
 
 const ResourceSchema = z

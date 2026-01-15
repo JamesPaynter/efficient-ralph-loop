@@ -13,6 +13,7 @@ import type { LlmClient, LlmCompletionResult } from "../llm/client.js";
 import { LlmError } from "../llm/client.js";
 import { AnthropicClient } from "../llm/anthropic.js";
 import { OpenAiClient } from "../llm/openai.js";
+import { MockLlmClient, isMockLlmEnabled } from "../llm/mock.js";
 
 // =============================================================================
 // TYPES
@@ -514,6 +515,10 @@ function parseTaskDirName(name: string): { taskId: string; taskSlug: string } {
 }
 
 function createValidatorClient(cfg: DoctorValidatorConfig): LlmClient {
+  if (isMockLlmEnabled() || cfg.provider === "mock") {
+    return new MockLlmClient();
+  }
+
   if (cfg.provider === "openai") {
     return new OpenAiClient({
       model: cfg.model,

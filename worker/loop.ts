@@ -4,7 +4,7 @@ import path from "node:path";
 import { execa, execaCommand } from "execa";
 
 import { isTestPath, resolveTestPaths } from "../src/core/test-paths.js";
-import { CodexRunner } from "./codex.js";
+import { createCodexRunner, type CodexRunnerLike } from "./codex.js";
 import {
   createStdoutLogger,
   safeAttemptName,
@@ -110,11 +110,14 @@ export async function runWorker(config: WorkerConfig, logger?: WorkerLogger): Pr
     );
   }
 
-  const codex = new CodexRunner({
+  const codex = createCodexRunner({
     codexHome: config.codexHome,
     model: config.codexModel,
     workingDirectory: config.workingDirectory,
     threadId: workerState.threadId,
+    taskId: config.taskId,
+    manifestPath: config.manifestPath,
+    specPath: config.specPath,
   });
 
   const strictTddEnabled = manifest.tdd_mode === "strict";
@@ -370,7 +373,7 @@ async function runStrictTddStageA(args: {
   manifestPath: string;
   spec: string;
   taskBranch?: string;
-  codex: CodexRunner;
+  codex: CodexRunnerLike;
   workerState: WorkerStateStore;
   log: WorkerLogger;
   loggedResumeEvent: boolean;
@@ -498,7 +501,7 @@ async function runStrictTddStageA(args: {
 async function runCodexTurn(args: {
   attempt: number;
   prompt: string;
-  codex: CodexRunner;
+  codex: CodexRunnerLike;
   log: WorkerLogger;
   workerState: WorkerStateStore;
   loggedResumeEvent: boolean;
@@ -508,7 +511,7 @@ async function runCodexTurn(args: {
 
   let hasLoggedResume = args.loggedResumeEvent;
   await args.codex.streamPrompt(args.prompt, {
-    onThreadResumed: (threadId) => {
+    onThreadResumed: (threadId: string) => {
       if (!hasLoggedResume) {
         args.log.log({
           type: "codex.thread.resumed",
@@ -518,7 +521,7 @@ async function runCodexTurn(args: {
         hasLoggedResume = true;
       }
     },
-    onThreadStarted: async (threadId) => {
+    onThreadStarted: async (threadId: string) => {
       await args.workerState.recordThreadId(threadId);
       args.log.log({
         type: "codex.thread.started",
@@ -526,7 +529,7 @@ async function runCodexTurn(args: {
         payload: { thread_id: threadId },
       });
     },
-    onEvent: (event) =>
+    onEvent: (event: unknown) =>
       args.log.log({
         type: "codex.event",
         attempt: args.attempt,
