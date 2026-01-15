@@ -15,7 +15,7 @@ It is intentionally an MVP: it runs end-to-end, but it does not yet implement ev
 - `run` — load `.tasks`, build conflict-free batches, spawn **Docker** workers in parallel, stream logs, merge successful branches, run integration doctor
 - Manifest compliance check after each task with structured `access.requested` events (warn/block via `manifest_enforcement`)
 - `status` — show run + task status from persisted state
-- `logs` — dump orchestrator or task JSONL logs (simple query)
+- `logs` — query/follow logs, show timelines/failure digests, and summarize tasks (LLM optional)
 - `clean` — remove containers/workspaces/logs for a run
 
 ## Quick start

@@ -79,6 +79,11 @@ doctor_validator:
   run_every_n_tasks: 10
   # Anthropic works here too (set provider to "anthropic" and provide a Claude model).
 
+log_summaries:
+  enabled: false
+  provider: openai
+  model: gpt-4o-mini
+
 # Docker worker image (paths resolve relative to this file when not absolute)
 docker:
   image: task-orchestrator-worker:latest

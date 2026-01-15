@@ -53,6 +53,18 @@ const DoctorValidatorSchema = ValidatorSchema.extend({
   run_every_n_tasks: z.number().int().positive().default(10),
 }).strict();
 
+const LogSummariesSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    provider: LlmProviderSchema.default("openai"),
+    model: z.string().min(1).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    timeout_seconds: z.number().int().positive().optional(),
+    anthropic_api_key: z.string().min(1).optional(),
+    anthropic_base_url: z.string().min(1).optional(),
+  })
+  .strict();
+
 const BudgetsSchema = z
   .object({
     max_tokens_per_task: z.number().int().positive().optional(),
@@ -109,6 +121,7 @@ export const ProjectConfigSchema = z
 
     test_validator: ValidatorSchema.optional(),
     doctor_validator: DoctorValidatorSchema.optional(),
+    log_summaries: LogSummariesSchema.optional(),
     budgets: BudgetsSchema.default({}),
   })
   .strict();
@@ -119,6 +132,7 @@ export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
 export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
+export type LogSummaryConfig = z.infer<typeof LogSummariesSchema>;
 export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
 export type ResourceConfig = z.infer<typeof ResourceSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
