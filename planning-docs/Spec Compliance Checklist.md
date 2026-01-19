@@ -1,5 +1,7 @@
 ## Spec Compliance Checklist (2026-01-19)
 
+> Deprecated: the live traceability source is `docs/spec-traceability.md`. Update the matrix there and treat this page as a frozen snapshot.
+
 ### Snapshot
 | Area | Status | Notes |
 | --- | --- | --- |

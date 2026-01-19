@@ -10,6 +10,9 @@ LLM-driven planner and Docker-isolated Codex workers that plan tasks, run them i
 - Budgets compute token/cost usage from Codex events and emit `budget.warn`/`budget.block` events; block mode halts runs when limits are crossed.
 - Logs/state live under `.mycelium` by default (set by the CLI); `logs` can stream raw JSONL or query a SQLite index for timelines/failure digests.
 
+## Docs
+- Spec traceability matrix: `docs/spec-traceability.md` maps each spec principle to code, tests, and drills.
+
 ## Run an autopilot pass
 1) Install deps: `npm install` (Node 20+).  
 2) Build (optional for dev mode): `npm run build`.  
