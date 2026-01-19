@@ -4,6 +4,7 @@ import { Command } from "commander";
 
 import { runWorker, type WorkerConfig } from "./loop.js";
 import { createStdoutLogger, toErrorMessage } from "./logging.js";
+import type { ModelReasoningEffort } from "@openai/codex-sdk";
 
 // =============================================================================
 // CLI
@@ -24,6 +25,7 @@ type CliOptions = {
   runLogsDir?: string;
   codexHome?: string;
   codexModel?: string;
+  codexReasoningEffort?: string;
   workdir?: string;
   checkpointCommits?: boolean;
 };
@@ -70,9 +72,13 @@ export async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--codex-home <path>",
-      "CODEX_HOME path for Codex SDK (env: CODEX_HOME, default: <workdir>/.task-orchestrator/codex-home)",
+      "CODEX_HOME path for Codex SDK (env: CODEX_HOME, default: <workdir>/.mycelium/codex-home)",
     )
     .option("--codex-model <name>", "Model override for Codex (env: CODEX_MODEL)")
+    .option(
+      "--codex-reasoning-effort <level>",
+      "Codex reasoning effort: minimal|low|medium|high|xhigh (env: CODEX_MODEL_REASONING_EFFORT)",
+    )
     .option("--workdir <path>", "Working directory for commands (default: current directory)")
     .action(async (opts: CliOptions) => {
       let config: WorkerConfig;
@@ -157,8 +163,12 @@ function buildConfig(opts: CliOptions): WorkerConfig {
   const codexHome = resolvePath(
     opts.codexHome ??
       envOrUndefined("CODEX_HOME") ??
-      path.join(workingDirectory, ".task-orchestrator", "codex-home"),
+      path.join(workingDirectory, ".mycelium", "codex-home"),
     workingDirectory,
+  );
+  const codexReasoningEffort = parseCodexReasoningEffort(
+    opts.codexReasoningEffort ?? envOrUndefined("CODEX_MODEL_REASONING_EFFORT"),
+    "CODEX_MODEL_REASONING_EFFORT",
   );
   const checkpointCommits =
     getBooleanOption(
@@ -181,6 +191,7 @@ function buildConfig(opts: CliOptions): WorkerConfig {
     runLogsDir,
     codexHome,
     codexModel: opts.codexModel ?? envOrUndefined("CODEX_MODEL") ?? undefined,
+    codexReasoningEffort,
     workingDirectory,
     checkpointCommits,
   };
@@ -239,6 +250,19 @@ function parseStringArray(raw: string | undefined, label: string): string[] | un
     // handled below
   }
   throw new Error(`${label} must be a JSON array of strings.`);
+}
+
+function parseCodexReasoningEffort(
+  raw: string | undefined,
+  label: string,
+): ModelReasoningEffort | undefined {
+  if (!raw) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  const allowed: ModelReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
+  if ((allowed as string[]).includes(normalized)) {
+    return normalized as ModelReasoningEffort;
+  }
+  throw new Error(`${label} must be one of: ${allowed.join(", ")}`);
 }
 
 function resolvePath(input: string, baseDir: string): string {

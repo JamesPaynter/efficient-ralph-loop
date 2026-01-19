@@ -27,7 +27,7 @@ export async function git(
 }
 
 export async function ensureCleanWorkingTree(cwd: string): Promise<void> {
-  // Ignore untracked files (e.g., .tasks/, logs/) so the tool can operate without
+  // Ignore untracked files (e.g., .mycelium/tasks, logs/) so the tool can operate without
   // requiring those artifacts to be committed.
   const res = await execa("git", ["status", "--porcelain", "--untracked-files=no"], {
     cwd,

@@ -12,16 +12,20 @@ import { runLogsDir, runStatePath, runWorkspaceDir } from "./paths.js";
 
 describe("cleanup", () => {
   const projectName = "demo-project";
-  const originalHome = process.env.TASK_ORCHESTRATOR_HOME;
+  const originalHome = process.env.MYCELIUM_HOME;
   let tmpHome: string;
 
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "cleanup-"));
-    process.env.TASK_ORCHESTRATOR_HOME = tmpHome;
+    process.env.MYCELIUM_HOME = tmpHome;
   });
 
   afterEach(async () => {
-    process.env.TASK_ORCHESTRATOR_HOME = originalHome;
+    if (originalHome === undefined) {
+      delete process.env.MYCELIUM_HOME;
+    } else {
+      process.env.MYCELIUM_HOME = originalHome;
+    }
     await fse.remove(tmpHome);
   });
 

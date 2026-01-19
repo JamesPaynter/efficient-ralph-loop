@@ -65,7 +65,7 @@ export async function removeRunWorkspace(projectName: string, runId: string): Pr
 
 async function ensureWorkspaceRuntimeIgnored(workspacePath: string): Promise<void> {
   const excludePath = path.join(workspacePath, ".git", "info", "exclude");
-  const patterns = [".task-orchestrator/"];
+  const patterns = [".mycelium/"];
 
   let existing = "";
   try {
@@ -82,8 +82,8 @@ async function ensureWorkspaceRuntimeIgnored(workspacePath: string): Promise<voi
   if (missing.length === 0) return;
 
   const pieces: string[] = [existing.trimEnd()];
-  if (!existing.includes("task-orchestrator runtime files")) {
-    pieces.push("# task-orchestrator runtime files");
+  if (!existing.includes("mycelium runtime files")) {
+    pieces.push("# mycelium runtime files");
   }
   pieces.push(...missing);
 

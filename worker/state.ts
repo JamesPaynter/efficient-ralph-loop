@@ -10,7 +10,7 @@ import { isoNow } from "./logging.js";
 // TYPES & CONSTANTS
 // =============================================================================
 
-const STATE_DIR = ".task-orchestrator";
+const STATE_DIR = ".mycelium";
 const STATE_FILE = "worker-state.json";
 
 const WorkerCheckpointSchema = z.object({

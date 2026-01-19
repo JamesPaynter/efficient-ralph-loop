@@ -14,7 +14,7 @@ import { runProject } from "../core/executor.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/toy-repo");
 
-const ENV_VARS = ["TASK_ORCHESTRATOR_HOME", "MOCK_LLM", "MOCK_LLM_OUTPUT_PATH"] as const;
+const ENV_VARS = ["MYCELIUM_HOME", "MOCK_LLM", "MOCK_LLM_OUTPUT_PATH"] as const;
 const originalEnv: Record<(typeof ENV_VARS)[number], string | undefined> = Object.fromEntries(
   ENV_VARS.map((key) => [key, process.env[key]]),
 ) as Record<(typeof ENV_VARS)[number], string | undefined>;
@@ -49,7 +49,7 @@ describe("integration: plan + run (mock LLM)", () => {
     const configPath = path.join(tmpRoot, "project.yaml");
     await writeProjectConfig(configPath, repoDir);
 
-    process.env.TASK_ORCHESTRATOR_HOME = path.join(tmpRoot, ".task-orchestrator");
+    process.env.MYCELIUM_HOME = path.join(tmpRoot, ".mycelium");
     process.env.MOCK_LLM = "1";
     process.env.MOCK_LLM_OUTPUT_PATH = path.join(repoDir, "mock-planner-output.json");
 
@@ -57,7 +57,7 @@ describe("integration: plan + run (mock LLM)", () => {
     const headBefore = await gitHead(repoDir, config.main_branch);
 
     const planResult = await planProject("toy-project", config, {
-      input: "docs/planning/implementation-plan.md",
+      input: ".mycelium/planning/implementation-plan.md",
     });
     expect(planResult.tasks).toHaveLength(2);
 
@@ -89,7 +89,7 @@ async function initGitRepo(repoDir: string): Promise<void> {
   await execa("git", ["config", "user.name", "Integration Tester"], { cwd: repoDir });
   await execa("git", ["add", "-A"], { cwd: repoDir });
   await execa("git", ["commit", "-m", "initial"], { cwd: repoDir });
-  await execa("git", ["checkout", "-b", "main"], { cwd: repoDir });
+  await execa("git", ["checkout", "-B", "main"], { cwd: repoDir });
 }
 
 async function writeProjectConfig(configPath: string, repoDir: string): Promise<void> {
@@ -98,7 +98,7 @@ async function writeProjectConfig(configPath: string, repoDir: string): Promise<
   const configContents = [
     `repo_path: ${repoDir}`,
     "main_branch: main",
-    "tasks_dir: .tasks",
+    "tasks_dir: .mycelium/tasks",
     "doctor: npm test",
     "max_parallel: 2",
     "resources:",

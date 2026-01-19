@@ -41,9 +41,9 @@ resources:
     paths: ["server/*"]
 planner:
   provider: openai
-  model: o3
+  model: gpt-5.2
 worker:
-  model: gpt-5.1-codex-max
+  model: gpt-5.2-codex
 docker:
   dockerfile: ./templates/Dockerfile
   build_context: ..
@@ -85,9 +85,9 @@ resources:
     paths: ["server/*"]
 planner:
   provider: openai
-  model: o3
+  model: gpt-5.2
 worker:
-  model: gpt-5.1-codex-max
+  model: gpt-5.2-codex
 `,
     );
 
@@ -118,9 +118,9 @@ resources:
     paths: ["server/*"]
 planner:
   provider: openai
-  model: o3
+  model: gpt-5.2
 worker:
-  model: gpt-5.1-codex-max
+  model: gpt-5.2-codex
 `,
     );
 
@@ -150,9 +150,9 @@ resources:
     paths: ["server/*"]
 planner:
   provider: openai
-  model: o3
+  model: gpt-5.2
 worker:
-  model: gpt-5.1-codex-max
+  model: gpt-5.2-codex
 docker:
   image: custom-worker:latest
   network_mode: none

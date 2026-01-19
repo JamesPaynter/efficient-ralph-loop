@@ -154,9 +154,9 @@ Use the Effort/Tier system for estimating and choosing a model:
 - **Tier**: mini / standard / pro
 
 Model mapping:
-- **Tier mini** → `gpt-5.1-codex-mini` (default reasoning)
-- **Tier standard** → `gpt-5.1-codex` (default reasoning)
-- **Tier pro** → `gpt-5.1-codex-max` (Reasoning: Extra high / supermax)
+- **Tier mini** → `gpt-5.2-codex-mini` (default reasoning)
+- **Tier standard** → `gpt-5.2-codex` (default reasoning)
+- **Tier pro** → `gpt-5.2-codex` (Reasoning: xhigh)
 
 **scratchpad.md** - Working notes during implementation:
 - Session-dated entries

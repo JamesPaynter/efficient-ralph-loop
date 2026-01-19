@@ -10,6 +10,17 @@ main_branch: development-codex
 # Task branches are created as: <task_branch_prefix><id>-<name>
 task_branch_prefix: agent/
 
+# Tasks directory within the repo
+tasks_dir: .mycelium/tasks
+
+# Planning artifacts directory within the repo
+planning_dir: .mycelium/planning
+
+# Versioning controls for .mycelium contents
+versioning:
+  commit_planning: true
+  commit_tasks: true
+
 # Manifest enforcement policy: off | warn | block
 manifest_enforcement: warn
 
@@ -58,24 +69,28 @@ resources:
       - Dockerfile*
 
 planner:
-  provider: codex
-  model: o3
+  provider: openai
+  model: gpt-5.2
+  reasoning_effort: xhigh
   # For Anthropic, set provider to "anthropic", set model to a Claude variant,
   # and add anthropic_api_key / anthropic_base_url if you prefer config-based auth.
 
 worker:
-  model: gpt-5.1-codex-max
+  model: gpt-5.2-codex
+  reasoning_effort: xhigh
   checkpoint_commits: true
 
 test_validator:
   mode: warn
   provider: openai
-  model: o3
+  model: gpt-5.2
+  reasoning_effort: xhigh
 
 doctor_validator:
   mode: warn
   provider: openai
-  model: o3
+  model: gpt-5.2
+  reasoning_effort: xhigh
   run_every_n_tasks: 10
   # Anthropic works here too (set provider to "anthropic" and provide a Claude model).
 
@@ -86,9 +101,9 @@ log_summaries:
 
 # Docker worker image (paths resolve relative to this file when not absolute)
 docker:
-  image: task-orchestrator-worker:latest
-  dockerfile: /absolute/path/to/task-orchestrator/templates/Dockerfile
-  build_context: /absolute/path/to/task-orchestrator
+  image: mycelium-worker:latest
+  dockerfile: /absolute/path/to/mycelium/templates/Dockerfile
+  build_context: /absolute/path/to/mycelium
   user: worker
   network_mode: bridge # set to "none" for offline runs when dependencies are already available
   memory_mb: 2048

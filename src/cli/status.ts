@@ -31,7 +31,7 @@ function printRunNotFound(projectName: string, requestedRunId?: string): void {
     : `No runs found for project ${projectName}.`;
 
   console.log(notFound);
-  console.log(`Start a run with: task-orchestrator run --project ${projectName}`);
+  console.log(`Start a run with: mycelium run --project ${projectName}`);
   process.exitCode = 1;
 }
 

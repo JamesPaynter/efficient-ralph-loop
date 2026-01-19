@@ -1,17 +1,19 @@
 import path from "node:path";
 
-import { Codex } from "@openai/codex-sdk";
+import { Codex, type ModelReasoningEffort } from "@openai/codex-sdk";
 import { execa } from "execa";
 import fse from "fs-extra";
 import { z } from "zod";
 
-import { ensureCodexAuthForHome } from "./codexAuth.js";
+import { ensureCodexAuthForHome, hasCodexAuth } from "./codexAuth.js";
+import { resolveCodexReasoningEffort } from "./codex-reasoning.js";
 import type { PlannerConfig, ProjectConfig, ResourceConfig } from "./config.js";
 import { JsonlLogger } from "./logger.js";
 import { plannerHomeDir } from "./paths.js";
 import { renderPromptTemplate } from "./prompts.js";
 import {
-  TaskManifestWithSpecSchema,
+  FilesSchema,
+  LocksSchema,
   formatManifestIssues,
   normalizeTaskManifest,
   type TaskWithSpec,
@@ -75,7 +77,7 @@ const PlannerOutputJsonSchema = {
           verify: {
             type: "object",
             properties: {
-              doctor: { type: "string" },
+              doctor: { type: "string", minLength: 1 },
               fast: { type: "string" },
             },
             required: ["doctor", "fast"],
@@ -105,9 +107,31 @@ const PlannerOutputJsonSchema = {
   additionalProperties: false,
 } as const;
 
+const PlannerTaskSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    estimated_minutes: z.number().int().positive(),
+    dependencies: z.array(z.string()).optional(),
+    locks: LocksSchema.default({ reads: [], writes: [] }),
+    files: FilesSchema.default({ reads: [], writes: [] }),
+    affected_tests: z.array(z.string()).default([]),
+    test_paths: z.array(z.string()).default([]),
+    tdd_mode: z.enum(["off", "strict"]).default("off"),
+    verify: z
+      .object({
+        doctor: z.string().optional().nullable(),
+        fast: z.string().optional(),
+      })
+      .default({ doctor: "" }),
+    spec: z.string().min(1),
+  })
+  .strict();
+
 const PlannerResponseSchema = z.object({
   tasks: z
-    .array(TaskManifestWithSpecSchema)
+    .array(PlannerTaskSchema)
     .min(1, "Planner must return at least one task."),
 });
 
@@ -152,7 +176,11 @@ export async function planFromImplementationPlan(args: {
 
     log?.log({ type: "planner.llm.complete", payload: { finish_reason: completion.finishReason } });
 
-    const tasks = parsePlannerOutput(completion, config.resources.map((r) => r.name));
+    const tasks = parsePlannerOutput(
+      completion,
+      config.resources.map((r) => r.name),
+      config.doctor,
+    );
 
     log?.log({ type: "planner.validate.complete", payload: { task_count: tasks.length } });
 
@@ -186,6 +214,7 @@ export async function planFromImplementationPlan(args: {
 function parsePlannerOutput(
   completion: LlmCompletionResult<PlannerOutput>,
   resources: string[],
+  defaultDoctor: string,
 ): TaskWithSpec[] {
   const raw = completion.parsed ?? parseJson(completion.text);
   const parsed = PlannerResponseSchema.safeParse(raw);
@@ -195,9 +224,15 @@ function parsePlannerOutput(
     throw new Error(`Planner output failed schema validation:\n${detail}`);
   }
 
+  const fallbackDoctor = defaultDoctor.trim();
   const normalized = parsed.data.tasks.map((task) => {
-    const { spec, ...manifestFields } = task;
-    const manifest = normalizeTaskManifest(manifestFields);
+    const { spec, verify, ...manifestFields } = task;
+    const doctor = (verify?.doctor ?? "").trim() || fallbackDoctor;
+    const fast = verify?.fast?.trim();
+    const manifest = normalizeTaskManifest({
+      ...manifestFields,
+      verify: fast ? { doctor, fast } : { doctor },
+    });
     return { ...manifest, spec: spec.trim() };
   });
 
@@ -323,11 +358,43 @@ export function createPlannerClient(
   }
 
   if (cfg.provider === "openai") {
-    return new OpenAiClient({
-      model: cfg.model,
-      defaultTemperature: cfg.temperature,
-      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
-    });
+    try {
+      return new OpenAiClient({
+        model: cfg.model,
+        defaultTemperature: cfg.temperature,
+        defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
+        defaultReasoningEffort: cfg.reasoning_effort,
+      });
+    } catch (err) {
+      if (isMissingOpenAiKey(err) && hasCodexAuth()) {
+        const fallbackModel = toCodexModel(cfg.model);
+        const fallbackReasoningEffort = resolveCodexReasoningEffort(
+          fallbackModel,
+          cfg.reasoning_effort,
+        );
+        log?.log({
+          type: "planner.auth.fallback",
+          payload: {
+            provider: "openai",
+            fallback_provider: "codex",
+            model: cfg.model,
+            fallback_model: fallbackModel,
+            reason: "missing_openai_api_key",
+          },
+        });
+        console.log(
+          "OPENAI_API_KEY not set; falling back to Codex login for the planner.",
+        );
+        return new CodexPlannerClient({
+          model: fallbackModel,
+          modelReasoningEffort: fallbackReasoningEffort,
+          codexHome: plannerHomeDir(projectName),
+          workingDirectory: repoPath,
+          log,
+        });
+      }
+      throw err;
+    }
   }
 
   if (cfg.provider === "anthropic") {
@@ -342,8 +409,13 @@ export function createPlannerClient(
 
   if (cfg.provider === "codex") {
     const codexHome = plannerHomeDir(projectName);
+    const modelReasoningEffort = resolveCodexReasoningEffort(
+      cfg.model,
+      cfg.reasoning_effort,
+    );
     return new CodexPlannerClient({
       model: cfg.model,
+      modelReasoningEffort,
       codexHome,
       workingDirectory: repoPath,
       log,
@@ -353,19 +425,31 @@ export function createPlannerClient(
   throw new Error(`Unsupported planner provider: ${cfg.provider}`);
 }
 
+function isMissingOpenAiKey(err: unknown): boolean {
+  return err instanceof LlmError && err.message.includes("OPENAI_API_KEY");
+}
+
+function toCodexModel(model: string): string {
+  if (model.includes("codex")) return model;
+  return "gpt-5.2-codex";
+}
+
 class CodexPlannerClient implements LlmClient {
   private readonly model: string;
+  private readonly modelReasoningEffort?: ModelReasoningEffort;
   private readonly codexHome: string;
   private readonly workingDirectory: string;
   private readonly log?: JsonlLogger;
 
   constructor(args: {
     model: string;
+    modelReasoningEffort?: ModelReasoningEffort;
     codexHome: string;
     workingDirectory: string;
     log?: JsonlLogger;
   }) {
     this.model = args.model;
+    this.modelReasoningEffort = args.modelReasoningEffort;
     this.codexHome = args.codexHome;
     this.workingDirectory = args.workingDirectory;
     this.log = args.log;
@@ -377,7 +461,11 @@ class CodexPlannerClient implements LlmClient {
   ): Promise<LlmCompletionResult<TParsed>> {
     const codexHome = this.codexHome;
     await ensureDir(codexHome);
-    await writePlannerCodexConfig(path.join(codexHome, "config.toml"), this.model);
+    await writePlannerCodexConfig(
+      path.join(codexHome, "config.toml"),
+      this.model,
+      this.modelReasoningEffort,
+    );
 
     // If the user authenticated via `codex login`, auth material typically lives under
     // ~/.codex/auth.json (file-based storage). Because we run with a custom CODEX_HOME,
@@ -396,7 +484,11 @@ class CodexPlannerClient implements LlmClient {
     if (process.env.OPENAI_ORGANIZATION) env.OPENAI_ORGANIZATION = process.env.OPENAI_ORGANIZATION;
   
     const codex = new Codex({ env });
-    const thread = codex.startThread({ workingDirectory: this.workingDirectory });
+    const thread = codex.startThread({
+      workingDirectory: this.workingDirectory,
+      model: this.model,
+      modelReasoningEffort: this.modelReasoningEffort,
+    });
 
     const result = await thread.run(prompt, { outputSchema: options.schema as any });
     const text = result.finalResponse ?? "";
@@ -406,9 +498,14 @@ class CodexPlannerClient implements LlmClient {
   }
 }
 
-async function writePlannerCodexConfig(filePath: string, model: string): Promise<void> {
+async function writePlannerCodexConfig(
+  filePath: string,
+  model: string,
+  modelReasoningEffort?: ModelReasoningEffort,
+): Promise<void> {
   const content = [
     `model = "${model}"`,
+    ...(modelReasoningEffort ? [`model_reasoning_effort = "${modelReasoningEffort}"`] : []),
     // "never" means no approval prompts (the planner runs unattended; sandbox is read-only).
     `approval_policy = "never"`,
     `sandbox_mode = "read-only"`,

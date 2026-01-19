@@ -32,12 +32,16 @@ describe("runDoctorValidator", () => {
 
   beforeEach(async () => {
     tmpDir = await fse.mkdtemp(path.join(os.tmpdir(), "doctor-validator-"));
-    originalHome = process.env.TASK_ORCHESTRATOR_HOME;
-    process.env.TASK_ORCHESTRATOR_HOME = path.join(tmpDir, ".task-orchestrator");
+    originalHome = process.env.MYCELIUM_HOME;
+    process.env.MYCELIUM_HOME = path.join(tmpDir, ".mycelium");
   });
 
   afterEach(async () => {
-    process.env.TASK_ORCHESTRATOR_HOME = originalHome;
+    if (originalHome === undefined) {
+      delete process.env.MYCELIUM_HOME;
+    } else {
+      process.env.MYCELIUM_HOME = originalHome;
+    }
     await fse.remove(tmpDir);
   });
 
@@ -81,7 +85,7 @@ describe("runDoctorValidator", () => {
       enabled: true,
       mode: "warn",
       provider: "openai",
-      model: "o3",
+      model: "gpt-5.2",
       run_every_n_tasks: 1,
     };
     const llm = new FakeLlm({

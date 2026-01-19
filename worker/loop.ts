@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import type { ModelReasoningEffort } from "@openai/codex-sdk";
 import { execa, execaCommand } from "execa";
 
 import { isTestPath, resolveTestPaths } from "../src/core/test-paths.js";
@@ -42,6 +43,7 @@ export type WorkerConfig = {
   runLogsDir: string;
   codexHome: string;
   codexModel?: string;
+  codexReasoningEffort?: ModelReasoningEffort;
   workingDirectory: string;
   checkpointCommits: boolean;
   defaultTestPaths?: string[];
@@ -113,6 +115,7 @@ export async function runWorker(config: WorkerConfig, logger?: WorkerLogger): Pr
   const codex = createCodexRunner({
     codexHome: config.codexHome,
     model: config.codexModel,
+    modelReasoningEffort: config.codexReasoningEffort,
     workingDirectory: config.workingDirectory,
     threadId: workerState.threadId,
     taskId: config.taskId,
@@ -622,7 +625,7 @@ async function ensureGitIdentity(cwd: string, log: WorkerLogger): Promise<void> 
     stdio: "pipe",
   });
   if (nameRes.exitCode !== 0 || nameRes.stdout.trim().length === 0) {
-    await execa("git", ["config", "user.name", "task-orchestrator"], { cwd });
+    await execa("git", ["config", "user.name", "mycelium"], { cwd });
     log.log({ type: "git.identity.set", payload: { field: "user.name" } });
   }
 
@@ -632,7 +635,7 @@ async function ensureGitIdentity(cwd: string, log: WorkerLogger): Promise<void> 
     stdio: "pipe",
   });
   if (emailRes.exitCode !== 0 || emailRes.stdout.trim().length === 0) {
-    await execa("git", ["config", "user.email", "task-orchestrator@localhost"], { cwd });
+    await execa("git", ["config", "user.email", "mycelium@localhost"], { cwd });
     log.log({ type: "git.identity.set", payload: { field: "user.email" } });
   }
 }
@@ -665,7 +668,7 @@ function diffChangedPaths(before: string[], after: string[]): string[] {
 function filterInternalChanges(files: string[], workingDirectory: string, runLogsDir: string): string[] {
   const logsRelative = normalizeToPosix(path.relative(workingDirectory, runLogsDir));
   return files.filter((file) => {
-    if (file.startsWith(".task-orchestrator/")) return false;
+    if (file.startsWith(".mycelium/")) return false;
     if (file.startsWith(".git/")) return false;
     if (logsRelative && !logsRelative.startsWith("..") && logsRelative !== ".") {
       if (file === logsRelative || file.startsWith(`${logsRelative}/`)) return false;

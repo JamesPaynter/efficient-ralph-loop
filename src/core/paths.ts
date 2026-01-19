@@ -1,11 +1,13 @@
 import fs from "node:fs";
+import type { Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 export function orchestratorHome(): string {
-  return process.env.TASK_ORCHESTRATOR_HOME
-    ? path.resolve(process.env.TASK_ORCHESTRATOR_HOME)
-    : path.join(os.homedir(), ".task-orchestrator");
+  const envHome = process.env.MYCELIUM_HOME;
+  if (envHome) return path.resolve(envHome);
+
+  return path.join(os.homedir(), ".mycelium");
 }
 
 export function projectsDir(): string {
@@ -58,14 +60,14 @@ export function resolveRunLogsDir(
 
   const runDirs = fs
     .readdirSync(base, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("run-"));
+    .filter((entry: Dirent) => entry.isDirectory() && entry.name.startsWith("run-"));
 
   if (runDirs.length === 0) {
     return null;
   }
 
   const withMtime = runDirs
-    .map((entry) => {
+    .map((entry: Dirent) => {
       const dir = path.join(base, entry.name);
       const stat = fs.statSync(dir);
       return { dir, runId: entry.name.replace(/^run-/, ""), mtimeMs: stat.mtimeMs };
@@ -162,7 +164,7 @@ export function workerCodexHomeDir(
 ): string {
   return path.join(
     taskWorkspaceDir(projectName, runId, taskId),
-    ".task-orchestrator",
+    ".mycelium",
     "codex-home",
   );
 }

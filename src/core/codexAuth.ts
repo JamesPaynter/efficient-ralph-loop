@@ -1,4 +1,5 @@
 // src/core/codexAuth.ts
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import fse from "fs-extra";
@@ -8,6 +9,12 @@ import { isMockLlmEnabled } from "../llm/mock.js";
 export type CodexAuthProvisioned =
   | { mode: "env"; var: "CODEX_API_KEY" | "OPENAI_API_KEY" | "MOCK_LLM" }
   | { mode: "copied"; from: string; to: string };
+
+export function hasCodexAuth(): boolean {
+  if (isMockLlmEnabled()) return true;
+  if (process.env.CODEX_API_KEY?.trim()) return true;
+  return findCodexAuthJsonSync() !== null;
+}
 
 /**
  * Ensure the Codex SDK can authenticate when running under a custom CODEX_HOME.
@@ -82,6 +89,25 @@ async function findCodexAuthJson(): Promise<string | null> {
   for (const p of candidates) {
     try {
       if (await fse.pathExists(p)) return p;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function findCodexAuthJsonSync(): string | null {
+  const candidates: string[] = [];
+
+  const envHome = process.env.CODEX_HOME?.trim();
+  if (envHome) candidates.push(path.join(envHome, "auth.json"));
+
+  candidates.push(path.join(os.homedir(), ".codex", "auth.json"));
+  candidates.push(path.join(os.homedir(), ".config", "codex", "auth.json"));
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
     } catch {
       // ignore
     }

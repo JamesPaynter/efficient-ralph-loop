@@ -18,11 +18,15 @@ describe("prepareTaskWorkspace", () => {
 
   let tmpDir: string;
   let bareRepo: string;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
-    await removeRunWorkspace(projectName, runId);
+    originalHome = process.env.MYCELIUM_HOME;
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "workspace-manager-"));
+    process.env.MYCELIUM_HOME = path.join(tmpDir, ".mycelium-home");
+
+    await removeRunWorkspace(projectName, runId);
     bareRepo = path.join(tmpDir, "source.git");
 
     await execa("git", ["init", "--bare", bareRepo]);
@@ -42,6 +46,11 @@ describe("prepareTaskWorkspace", () => {
   afterEach(async () => {
     await removeRunWorkspace(projectName, runId);
     await fse.remove(tmpDir);
+    if (originalHome === undefined) {
+      delete process.env.MYCELIUM_HOME;
+    } else {
+      process.env.MYCELIUM_HOME = originalHome;
+    }
   });
 
   it("clones repo and creates the task branch", async () => {
@@ -92,7 +101,7 @@ describe("prepareTaskWorkspace", () => {
     expect(await fse.readFile(markerPath, "utf8")).toBe("keep");
   });
 
-  it("ignores task-orchestrator runtime files in git status", async () => {
+  it("ignores mycelium runtime files in git status", async () => {
     const options = {
       projectName,
       runId,
@@ -108,7 +117,7 @@ describe("prepareTaskWorkspace", () => {
     const excludePath = path.join(workspacePath, ".git", "info", "exclude");
     const exclude = await fse.readFile(excludePath, "utf8");
 
-    expect(exclude).toContain(".task-orchestrator/");
+    expect(exclude).toContain(".mycelium/");
   });
 
   it("fails when workspace points to a different repo", async () => {

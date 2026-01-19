@@ -1,16 +1,16 @@
 {
-  "name": "task-orchestrator",
+  "name": "mycelium",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Autonomous task orchestrator for long-running Codex-powered software delivery",
   "license": "Apache-2.0",
   "bin": {
-    "task-orchestrator": "./bin/task-orchestrator"
+    "mycelium": "./bin/mycelium"
   },
   "files": [
     "dist/**/*",
-    "bin/task-orchestrator",
+    "bin/mycelium",
     "templates/**/*",
     "README.md",
     "LICENSE"

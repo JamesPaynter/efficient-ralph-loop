@@ -64,7 +64,7 @@ describe("runWorker checkpoint commits", () => {
       maxRetries: 1,
       bootstrapCmds: [],
       runLogsDir: path.join(workspace, "logs"),
-      codexHome: path.join(workspace, ".task-orchestrator", "codex-home"),
+      codexHome: path.join(workspace, ".mycelium", "codex-home"),
       workingDirectory: workspace,
       checkpointCommits: true,
     };
@@ -102,7 +102,7 @@ describe("runWorker checkpoint commits", () => {
       maxRetries: 1,
       bootstrapCmds: [],
       runLogsDir: path.join(workspace, "logs"),
-      codexHome: path.join(workspace, ".task-orchestrator", "codex-home"),
+      codexHome: path.join(workspace, ".mycelium", "codex-home"),
       workingDirectory: workspace,
       checkpointCommits: true,
     };
@@ -172,7 +172,7 @@ describe("runWorker strict TDD", () => {
       maxRetries: 1,
       bootstrapCmds: [],
       runLogsDir: path.join(workspace, "logs"),
-      codexHome: path.join(workspace, ".task-orchestrator", "codex-home"),
+      codexHome: path.join(workspace, ".mycelium", "codex-home"),
       workingDirectory: workspace,
       checkpointCommits: false,
     };

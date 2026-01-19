@@ -8,6 +8,13 @@ import { DEFAULT_TEST_PATHS } from "./test-paths.js";
 
 const LlmProviderSchema = z.enum(["openai", "anthropic", "codex", "mock"]);
 export const ValidatorModeSchema = z.enum(["off", "warn", "block"]);
+const ReasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const VersioningSchema = z
+  .object({
+    commit_planning: z.boolean().default(true),
+    commit_tasks: z.boolean().default(true),
+  })
+  .strict();
 
 const ResourceSchema = z
   .object({
@@ -19,10 +26,11 @@ const ResourceSchema = z
 
 const PlannerSchema = z
   .object({
-    provider: LlmProviderSchema.default("codex"),
+    provider: LlmProviderSchema.default("openai"),
     model: z.string().min(1),
     temperature: z.number().min(0).max(2).optional(),
     timeout_seconds: z.number().int().positive().optional(),
+    reasoning_effort: ReasoningEffortSchema.optional(),
     anthropic_api_key: z.string().min(1).optional(),
     anthropic_base_url: z.string().min(1).optional(),
   })
@@ -31,6 +39,7 @@ const PlannerSchema = z
 const WorkerSchema = z
   .object({
     model: z.string().min(1),
+    reasoning_effort: ReasoningEffortSchema.optional(),
     max_retries: z.number().int().positive().optional(),
     checkpoint_commits: z.boolean().default(true),
   })
@@ -44,6 +53,7 @@ const ValidatorSchema = z
     model: z.string().min(1),
     temperature: z.number().min(0).max(2).optional(),
     timeout_seconds: z.number().int().positive().optional(),
+    reasoning_effort: ReasoningEffortSchema.optional(),
     anthropic_api_key: z.string().min(1).optional(),
     anthropic_base_url: z.string().min(1).optional(),
   })
@@ -60,6 +70,7 @@ const LogSummariesSchema = z
     model: z.string().min(1).optional(),
     temperature: z.number().min(0).max(2).optional(),
     timeout_seconds: z.number().int().positive().optional(),
+    reasoning_effort: ReasoningEffortSchema.optional(),
     anthropic_api_key: z.string().min(1).optional(),
     anthropic_base_url: z.string().min(1).optional(),
   })
@@ -77,7 +88,7 @@ const DockerNetworkModeSchema = z.enum(["bridge", "none"]);
 
 const DockerSchema = z
   .object({
-    image: z.string().min(1).default("task-orchestrator-worker:latest"),
+    image: z.string().min(1).default("mycelium-worker:latest"),
     dockerfile: z.string().default("templates/Dockerfile"),
     build_context: z.string().default("."),
     user: z.string().min(1).default("worker"),
@@ -96,7 +107,9 @@ export const ProjectConfigSchema = z
     main_branch: z.string().min(1).default("development-codex"),
     task_branch_prefix: z.string().min(1).default("agent/"),
 
-    tasks_dir: z.string().min(1).default(".tasks"),
+    tasks_dir: z.string().min(1).default(".mycelium/tasks"),
+    planning_dir: z.string().min(1).default(".mycelium/planning"),
+    versioning: VersioningSchema.default({}),
 
     max_parallel: z.number().int().positive().default(4),
     max_retries: z.number().int().positive().default(20),
@@ -127,9 +140,11 @@ export const ProjectConfigSchema = z
   .strict();
 
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 export type BudgetsConfig = z.infer<typeof BudgetsSchema>;
 export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
+export type VersioningConfig = z.infer<typeof VersioningSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
 export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
 export type LogSummaryConfig = z.infer<typeof LogSummariesSchema>;

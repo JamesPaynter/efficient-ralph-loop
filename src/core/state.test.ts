@@ -197,9 +197,9 @@ describe("state store", () => {
   });
 
   it("finds the latest run id and loads matching state", async () => {
-    const originalHome = process.env.TASK_ORCHESTRATOR_HOME;
+    const originalHome = process.env.MYCELIUM_HOME;
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-home-"));
-    process.env.TASK_ORCHESTRATOR_HOME = tmpHome;
+    process.env.MYCELIUM_HOME = tmpHome;
 
     try {
       const project = "demo-project";
@@ -234,7 +234,11 @@ describe("state store", () => {
       expect(resolved?.runId).toBe("002");
       expect(resolved?.state.run_id).toBe("002");
     } finally {
-      process.env.TASK_ORCHESTRATOR_HOME = originalHome;
+      if (originalHome === undefined) {
+        delete process.env.MYCELIUM_HOME;
+      } else {
+        process.env.MYCELIUM_HOME = originalHome;
+      }
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });

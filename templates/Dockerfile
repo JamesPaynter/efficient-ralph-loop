@@ -1,4 +1,4 @@
-# Task Orchestrator Worker Image
+# Mycelium Worker Image
 #
 # Base image for running the Codex worker loop inside Docker.
 # Includes system dependencies often needed by doctor/bootstrap commands,
@@ -50,7 +50,7 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 
 # Create non-root user for worker processes
-RUN useradd -m -u 1000 -s /bin/bash worker \
+RUN if ! id -u worker >/dev/null 2>&1; then useradd -m -s /bin/bash worker; fi \
   && mkdir -p /workspace \
   && chown -R worker:worker /workspace
 

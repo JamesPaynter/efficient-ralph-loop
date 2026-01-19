@@ -1,14 +1,15 @@
 import OpenAI from "openai";
 import { APIError, OpenAIError } from "openai/error";
 import type {
-  ChatCompletion,
-  ChatCompletionCreateParams,
-  ChatCompletionMessage,
-} from "openai/resources/chat/completions";
+  Response,
+  ResponseCreateParamsNonStreaming,
+  ResponseTextConfig,
+} from "openai/resources/responses/responses";
 
 import {
   ensureJsonObject,
   LlmClient,
+  type ReasoningEffort,
   type LlmCompletionOptions,
   type LlmCompletionResult,
   LlmError,
@@ -16,9 +17,9 @@ import {
 
 type OpenAiTransport = {
   create: (
-    body: ChatCompletionCreateParams,
+    body: ResponseCreateParamsNonStreaming,
     options?: OpenAI.RequestOptions,
-  ) => Promise<ChatCompletion>;
+  ) => Promise<Response>;
 };
 
 type OpenAiClientOptions = {
@@ -27,6 +28,7 @@ type OpenAiClientOptions = {
   baseURL?: string;
   defaultTemperature?: number;
   defaultTimeoutMs?: number;
+  defaultReasoningEffort?: ReasoningEffort;
   maxRetries?: number;
   fetch?: typeof fetch;
   transport?: OpenAiTransport;
@@ -40,6 +42,7 @@ export class OpenAiClient implements LlmClient {
   private readonly model: string;
   private readonly defaultTemperature?: number;
   private readonly defaultTimeoutMs: number;
+  private readonly defaultReasoningEffort?: ReasoningEffort;
   private readonly maxRetries: number;
   private readonly transport: OpenAiTransport;
 
@@ -47,6 +50,7 @@ export class OpenAiClient implements LlmClient {
     this.model = options.model;
     this.defaultTemperature = options.defaultTemperature;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.defaultReasoningEffort = options.defaultReasoningEffort;
     this.maxRetries = Math.max(1, options.maxRetries ?? DEFAULT_MAX_RETRIES);
 
     if (!options.transport) {
@@ -79,8 +83,7 @@ export class OpenAiClient implements LlmClient {
 
     const response = await this.runWithRetries(() => this.transport.create(body, requestOptions));
 
-    const choice = response.choices?.[0];
-    const text = extractText(choice?.message);
+    const text = response.output_text ?? "";
 
     if (!text) {
       throw new LlmError("OpenAI response did not include assistant content.", response);
@@ -91,19 +94,23 @@ export class OpenAiClient implements LlmClient {
     return {
       text,
       parsed,
-      finishReason: choice?.finish_reason ?? null,
+      finishReason: response.status ?? null,
     };
   }
 
-  private buildRequestBody(prompt: string, options: LlmCompletionOptions): ChatCompletionCreateParams {
+  private buildRequestBody(
+    prompt: string,
+    options: LlmCompletionOptions,
+  ): ResponseCreateParamsNonStreaming {
     const temperature =
       options.temperature ?? this.defaultTemperature ?? 0; // Deterministic by default for validators.
+    const reasoningEffort = options.reasoningEffort ?? this.defaultReasoningEffort;
 
-    const responseFormat =
+    const textConfig: ResponseTextConfig | undefined =
       options.schema !== undefined
         ? {
-            type: "json_schema" as const,
-            json_schema: {
+            format: {
+              type: "json_schema",
               name: "structured_output",
               schema: options.schema,
               strict: true,
@@ -111,11 +118,12 @@ export class OpenAiClient implements LlmClient {
           }
         : undefined;
 
-    const body: ChatCompletionCreateParams = {
+    const body: ResponseCreateParamsNonStreaming = {
       model: this.model,
-      messages: [{ role: "user", content: prompt }],
+      input: prompt,
       temperature,
-      response_format: responseFormat,
+      text: textConfig,
+      reasoning: reasoningEffort ? { effort: reasoningEffort } : undefined,
     };
 
     return body;
@@ -217,40 +225,13 @@ function createTransport(args: {
 
   return {
     create: async (body, options) => {
-      const response = (await client.chat.completions.create(
-        { ...body, stream: false },
-        options,
-      )) as ChatCompletion;
-
-      if (!response.choices) {
+      const response = await client.responses.create({ ...body, stream: false }, options);
+      if (!("output_text" in response)) {
         throw new LlmError("Received unexpected streaming response from OpenAI.");
       }
-
-      return response;
+      return response as Response;
     },
   };
-}
-
-function extractText(message?: ChatCompletionMessage | null): string {
-  if (!message) return "";
-
-  const { content } = message;
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    const parts = content as Array<{ text?: string } | string>;
-    return parts
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if ("text" in part && typeof part.text === "string") return part.text;
-        return "";
-      })
-      .join("");
-  }
-
-  return "";
 }
 
 function delay(durationMs: number): Promise<void> {

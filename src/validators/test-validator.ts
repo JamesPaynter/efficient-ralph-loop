@@ -397,6 +397,7 @@ function createValidatorClient(cfg: ValidatorConfig): LlmClient {
       model: cfg.model,
       defaultTemperature: cfg.temperature ?? 0,
       defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
+      defaultReasoningEffort: cfg.reasoning_effort,
     });
   }
 

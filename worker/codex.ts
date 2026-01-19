@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   Codex,
   type ApprovalMode,
+  type ModelReasoningEffort,
   type SandboxMode,
   type Thread,
   type ThreadEvent,
@@ -15,6 +16,7 @@ import { isMockLlmEnabled } from "../src/llm/mock.js";
 export type CodexRunnerOptions = {
   codexHome: string;
   model?: string;
+  modelReasoningEffort?: ModelReasoningEffort;
   workingDirectory: string;
   sandboxMode?: SandboxMode;
   approvalPolicy?: ApprovalMode;
@@ -59,6 +61,7 @@ export class CodexRunner {
       workingDirectory: opts.workingDirectory,
       sandboxMode: opts.sandboxMode ?? "danger-full-access",
       approvalPolicy: opts.approvalPolicy ?? "never",
+      modelReasoningEffort: opts.modelReasoningEffort,
     };
 
     if (opts.model) {
