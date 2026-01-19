@@ -2,6 +2,8 @@
 
 Proves that `resume` can recover from an orchestrator crash while the worker container keeps running and that the worker resumes the same Codex thread.
 
+Note: Ctrl+C/SIGTERM now triggers a graceful stop: the orchestrator logs `run.stop`, flushes state, and leaves task containers running for `resume` (pass `--stop-containers-on-exit` to stop them first).
+
 ## Quick automation
 - `RUN_DOCKER_TESTS=1 npm test -- src/__tests__/resume-drill.test.ts`
   - Uses the toy fixture in Docker, kills the orchestrator after `container.start`, runs `resume`, and asserts `container.reattach` + `codex.thread.resumed` + run `complete`.

@@ -16,6 +16,7 @@ import { createPlannerClient } from "../core/planner.js";
 import { StateStore, summarizeRunState } from "../core/state-store.js";
 import { isoNow, defaultRunId } from "../core/utils.js";
 import { planProject } from "./plan.js";
+import { createRunStopSignalHandler } from "./signal-handlers.js";
 
 // =============================================================================
 // CLI ENTRYPOINT
@@ -34,20 +35,20 @@ export async function autopilotCommand(
     runDryRun?: boolean;
     buildImage?: boolean;
     useDocker?: boolean;
+    stopContainersOnExit?: boolean;
   },
 ): Promise<void> {
   const sessionId = opts.runId ?? defaultRunId();
   const startedAt = isoNow();
 
-  const planInputDefault = path.join("docs", "planning", "002-implementation", "implementation-plan.md");
-  const planInputPath = resolvePath(config.repo_path, opts.planInput ?? planInputDefault);
-  const transcriptPath = path.join(
-    config.repo_path,
-    "docs",
-    "planning",
-    "sessions",
-    `${sessionId}-autopilot.md`,
+  const planningRoot = resolvePath(config.repo_path, config.planning_dir);
+  const planInputDefault = path.join(
+    planningRoot,
+    "002-implementation",
+    "implementation-plan.md",
   );
+  const planInputPath = resolvePath(config.repo_path, opts.planInput ?? planInputDefault);
+  const transcriptPath = path.join(planningRoot, "sessions", `${sessionId}-autopilot.md`);
   const rel = (p: string): string => path.relative(config.repo_path, p);
 
   const context: AutopilotTranscriptContext = {
@@ -60,6 +61,16 @@ export async function autopilotCommand(
 
   const client = createPlannerClient(config.planner, projectName, config.repo_path);
   const io = new ConsoleAutopilotIo();
+  const stopHandler = createRunStopSignalHandler({
+    onSignal: (signal) => {
+      const containerNote = opts.stopContainersOnExit
+        ? "Stopping task containers before exit."
+        : "Leaving task containers running for resume.";
+      io.note(
+        `Received ${signal}. Stopping run ${sessionId}. ${containerNote} Resume with: mycelium resume --project ${projectName} --run-id ${sessionId}`,
+      );
+    },
+  });
 
   const transcriptData: Omit<AutopilotTranscriptData, keyof AutopilotTranscriptContext> = {
     turns: [],
@@ -82,6 +93,7 @@ export async function autopilotCommand(
     io.note("Drafting planning artifacts...");
     const artifactPaths = await writePlanningArtifacts({
       repoPath: config.repo_path,
+      planningRoot,
       sessionId,
       planInputPath,
       artifacts: session.artifacts,
@@ -114,6 +126,14 @@ export async function autopilotCommand(
       return;
     }
 
+    if (stopHandler.isStopped()) {
+      io.note(
+        `Run ${sessionId} was stopped before launch. Resume later with: mycelium resume --project ${projectName} --run-id ${sessionId}`,
+      );
+      transcriptData.runSkipped = true;
+      return;
+    }
+
     const stopReporter = startRunProgressReporter(projectName, sessionId);
     try {
       const runResult = await runProject(projectName, config, {
@@ -122,10 +142,16 @@ export async function autopilotCommand(
         dryRun: opts.runDryRun,
         buildImage: opts.buildImage,
         useDocker: opts.useDocker,
+        stopContainersOnExit: opts.stopContainersOnExit,
+        stopSignal: stopHandler.signal,
       });
 
       const summary = summarizeRunState(runResult.state);
-      const runStatus = opts.runDryRun ? `${summary.status} (dry-run)` : summary.status;
+      const runStatus = runResult.stopped
+        ? "stopped"
+        : opts.runDryRun
+          ? `${summary.status} (dry-run)`
+          : summary.status;
       transcriptData.run = {
         runId: runResult.runId,
         status: runStatus,
@@ -136,11 +162,30 @@ export async function autopilotCommand(
           failed: summary.taskCounts.failed,
           needsHuman: summary.humanReview.length,
         },
+        stopped:
+          runResult.stopped === undefined
+            ? undefined
+            : {
+                signal: runResult.stopped.signal ?? null,
+                containers: runResult.stopped.containers,
+                stopContainersRequested: runResult.stopped.stopContainersRequested,
+              },
       };
 
-      io.note(
-        `Run ${runResult.runId} completed with status=${runStatus} (${summary.taskCounts.complete}/${summary.taskCounts.total} complete).`,
-      );
+      if (runResult.stopped) {
+        const signalLabel = runResult.stopped.signal ? ` (${runResult.stopped.signal})` : "";
+        const containerLabel =
+          runResult.stopped.containers === "stopped"
+            ? "stopped"
+            : "left running for resume";
+        io.note(
+          `Run ${runResult.runId} stopped by signal${signalLabel}; containers ${containerLabel}. Resume with: mycelium resume --project ${projectName} --run-id ${runResult.runId}`,
+        );
+      } else {
+        io.note(
+          `Run ${runResult.runId} completed with status=${runStatus} (${summary.taskCounts.complete}/${summary.taskCounts.total} complete).`,
+        );
+      }
     } finally {
       stopReporter();
     }
@@ -154,6 +199,7 @@ export async function autopilotCommand(
     throw err;
   } finally {
     io.close();
+    stopHandler.cleanup();
     await writeAutopilotTranscript({
       transcriptPath,
       context,

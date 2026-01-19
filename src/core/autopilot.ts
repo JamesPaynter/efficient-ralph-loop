@@ -61,6 +61,11 @@ export type RunExecutionSummary = {
     needsHuman: number;
   };
   error?: string;
+  stopped?: {
+    signal: string | null;
+    containers: "left_running" | "stopped";
+    stopContainersRequested: boolean;
+  };
 };
 
 export type AutopilotTranscriptContext = {
@@ -134,7 +139,8 @@ export async function runAutopilotSession(args: {
       continue;
     }
 
-    supervisorNote = decision.notes ?? decision.prompt;
+    const note = decision.notes?.trim();
+    supervisorNote = note ? note : decision.prompt;
     break;
   }
 
@@ -153,11 +159,13 @@ export async function runAutopilotSession(args: {
 
 export async function writePlanningArtifacts(args: {
   repoPath: string;
+  planningRoot?: string;
   sessionId: string;
   planInputPath: string;
   artifacts: AutopilotArtifacts;
 }): Promise<AutopilotArtifactPaths> {
-  const planningRoot = path.join(args.repoPath, "docs", "planning");
+  const planningRoot =
+    args.planningRoot ?? path.join(args.repoPath, ".mycelium", "planning");
   const discoveryDir = path.join(planningRoot, "000-discovery");
   const architectureDir = path.join(planningRoot, "001-architecture");
   const implementationDir = path.join(planningRoot, "002-implementation");
@@ -297,6 +305,13 @@ export function formatAutopilotTranscript(data: AutopilotTranscriptData): string
         `tasks=${data.run.tasks.complete}/${data.run.tasks.total} complete; running=${data.run.tasks.running}; failed=${data.run.tasks.failed}; review=${data.run.tasks.needsHuman}`,
       );
     }
+    if (data.run.stopped) {
+      const stopped = data.run.stopped;
+      const signal = stopped.signal ?? "unknown";
+      parts.push(
+        `stopped=signal:${signal}, containers:${stopped.containers}, requested_stop:${stopped.stopContainersRequested}`,
+      );
+    }
     if (data.run.error) parts.push(`error=${data.run.error}`);
     lines.push(`- ${parts.join("; ")}`);
   } else if (data.runError) {
@@ -334,7 +349,7 @@ async function requestNextInterviewAction(
     "Return JSON with:",
     `- action: "ask" or "synthesize"`,
     "- prompt: the next question or a short acknowledgment before planning",
-    "- notes: optional rationale",
+    "- notes: optional rationale (use empty string if none)",
     "",
     "Transcript:",
     transcript || "<empty>",
@@ -348,7 +363,7 @@ async function requestNextInterviewAction(
         prompt: { type: "string" },
         notes: { type: "string" },
       },
-      required: ["action", "prompt"],
+      required: ["action", "prompt", "notes"],
       additionalProperties: false,
     },
     temperature: 0.2,
@@ -381,6 +396,7 @@ async function generatePlanningArtifacts(
     transcript || "<empty>",
     "",
     "Produce Markdown for:",
+    "- readySummary (1-2 short sentences; can be empty)",
     "- discovery.requirements",
     "- discovery.research_notes",
     "- discovery.api_findings",
@@ -466,7 +482,7 @@ function buildArtifactSchema(): Record<string, unknown> {
         additionalProperties: false,
       },
     },
-    required: ["artifacts"],
+    required: ["readySummary", "artifacts"],
     additionalProperties: false,
   };
 }

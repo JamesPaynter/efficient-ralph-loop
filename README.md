@@ -22,15 +22,15 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 # Omit --local-worker to use Docker; the image auto-builds unless --no-build-image is set.
 ```
 6) Check progress: `npm run dev -- status --project <project-name>` and `npm run dev -- logs timeline --use-index`.  
-7) Resume a paused run: `npm run dev -- resume --project <project-name> --run-id <id> [--local-worker]`.
+7) Resume a paused run (after Ctrl+C or crash): `npm run dev -- resume --project <project-name> --run-id <id> [--local-worker]`.
 
 ## CLI essentials
 | Command | Purpose |
 | --- | --- |
 | `autopilot` | Interview → draft planning artifacts → plan → run (with transcripts in `.mycelium/planning/sessions/`). |
 | `plan --input <plan.md>` | Generate `.mycelium/tasks/**` manifests/specs from an implementation plan. |
-| `run [--tasks 001,002]` | Execute tasks (Docker by default, `--local-worker` for host mode), enforce manifest policy, merge batches, run integration doctor. |
-| `resume [--run-id <id>]` | Reload run state, reattach to running containers when present, reset missing ones to pending, and continue. |
+| `run [--tasks 001,002]` | Execute tasks (Docker by default, `--local-worker` for host mode), enforce manifest policy, merge batches, run integration doctor; Ctrl+C logs `run.stop`, flushes state, and leaves containers running for `resume` (add `--stop-containers-on-exit` to stop them). |
+| `resume [--run-id <id>]` | Reload run state, reattach to running containers when present, reset missing ones to pending, and continue with the same Ctrl+C stop semantics as `run`. |
 | `status` | Summarize run state (task counts, human-review queue, budgets). |
 | `logs [query|search|timeline|failures|doctor|summarize]` | Inspect JSONL logs directly or via SQLite index (`--use-index`). |
 | `clean` | Remove workspaces/containers/logs for a run (`--dry-run` and `--force` available). |
@@ -46,6 +46,7 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 
 ## Runtime behavior
 - Each task gets its own cloned workspace; manifests/specs are copied in before execution.
+- Signals: Ctrl+C/SIGTERM logs `run.stop`, persists state, and leaves task containers running for `resume` (use `--stop-containers-on-exit` on `run`/`resume`/`autopilot` to stop them).
 - Resume: run state is persisted after every mutation; `resume` reattaches to labeled containers when they still exist (streams historical logs), otherwise resets those tasks to pending; worker state restores Codex thread ids and checkpoint commits when available.
 - Doctors: per-task doctor runs each attempt; integration doctor runs after each batch; canary reruns doctor with `ORCH_CANARY=1` and feeds doctor validator when it passes unexpectedly.
 - Strict TDD: when `tdd_mode: "strict"` and `verify.fast` is set, Stage A requires failing tests first; Stage B implements until doctor passes; non-test changes in Stage A fail the attempt.

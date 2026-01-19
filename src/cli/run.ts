@@ -1,12 +1,44 @@
 import type { ProjectConfig } from "../core/config.js";
 import { runProject, type BatchPlanEntry, type RunOptions } from "../core/executor.js";
+import { defaultRunId } from "../core/utils.js";
+import { createRunStopSignalHandler } from "./signal-handlers.js";
 
 export async function runCommand(
   projectName: string,
   config: ProjectConfig,
   opts: RunOptions,
 ): Promise<void> {
-  const res = await runProject(projectName, config, opts);
+  const runId = opts.runId ?? defaultRunId();
+  const stopHandler = createRunStopSignalHandler({
+    onSignal: (signal) => {
+      const containerNote = opts.stopContainersOnExit
+        ? "Stopping task containers before exit."
+        : "Leaving task containers running so you can resume.";
+      console.log(
+        `Received ${signal}. Stopping run ${runId}. ${containerNote} Resume with: mycelium resume --project ${projectName} --run-id ${runId}`,
+      );
+    },
+  });
+
+  let res: Awaited<ReturnType<typeof runProject>>;
+  try {
+    res = await runProject(projectName, config, {
+      ...opts,
+      runId,
+      stopSignal: stopHandler.signal,
+    });
+  } finally {
+    stopHandler.cleanup();
+  }
+
+  if (res.stopped) {
+    const signalLabel = res.stopped.signal ? ` (${res.stopped.signal})` : "";
+    const containerLabel =
+      res.stopped.containers === "stopped" ? "stopped" : "left running for resume";
+    console.log(`Run ${res.runId} stopped by signal${signalLabel}; containers ${containerLabel}.`);
+    console.log(`Resume with: mycelium resume --project ${projectName} --run-id ${res.runId}`);
+    return;
+  }
 
   if (opts.dryRun) {
     printDryRunPlan(res.runId, res.plan);

@@ -1,10 +1,11 @@
 import { Command } from "commander";
 
-import { loadProjectConfig } from "../core/config-loader.js";
-import { projectConfigPath } from "../core/paths.js";
+import type { ProjectConfig } from "../core/config.js";
+import { loadConfigForCli } from "./config.js";
 
 import { autopilotCommand } from "./autopilot.js";
 import { cleanCommand } from "./clean.js";
+import { initCommand } from "./init.js";
 import { registerLogsCommand } from "./logs.js";
 import { planProject } from "./plan.js";
 import { resumeCommand } from "./resume.js";
@@ -14,23 +15,52 @@ import { statusCommand } from "./status.js";
 export function buildCli(): Command {
   const program = new Command();
 
+  const resolveConfig = (
+    projectName: string | undefined,
+    explicitConfig?: string,
+  ): { config: ProjectConfig; projectName: string } => {
+    const { config, configPath, created, projectName: resolvedProjectName } = loadConfigForCli({
+      projectName,
+      explicitConfigPath: explicitConfig,
+      initIfMissing: true,
+    });
+
+    if (created) {
+      console.log(`Created project config at ${configPath}`);
+      console.log(`Edit ${configPath} to set doctor, resources, and models.`);
+    }
+
+    return { config, projectName: resolvedProjectName };
+  };
+
   program
-    .name("task-orchestrator")
-    .description("Autonomous task orchestrator (Codex workers + Docker isolation)")
+    .name("mycelium")
+    .description("Mycelium task orchestrator (Codex workers + Docker isolation)")
     .version("0.1.0")
     .option(
       "--config <path>",
-      "Override project config path (defaults to ~/.task-orchestrator/projects/<project>.yaml)",
+      "Override project config path (defaults to repo .mycelium/config.yaml or ~/.mycelium/projects/<project>.yaml)",
     )
     .option("-v, --verbose", "Verbose output", false);
 
   registerLogsCommand(program);
 
   program
+    .command("init")
+    .description("Initialize repo config and task workspace")
+    .option("--force", "Overwrite existing repo config", false)
+    .action(async (opts) => {
+      await initCommand({ force: opts.force });
+    });
+
+  program
     .command("autopilot")
-    .requiredOption("--project <name>", "Project name")
+    .option("--project <name>", "Project name (default: repo folder name)")
     .option("--plan-input <path>", "Path to implementation plan markdown")
-    .option("--plan-output <dir>", "Tasks output directory (default: <repo>/.tasks)")
+    .option(
+      "--plan-output <dir>",
+      "Tasks output directory (default: <repo>/.mycelium/tasks)",
+    )
     .option("--run-id <id>", "Run/transcript id (default: timestamp)")
     .option("--max-questions <n>", "Max interview questions", (v) => parseInt(v, 10))
     .option("--max-parallel <n>", "Max parallel containers", (v) => parseInt(v, 10))
@@ -38,15 +68,19 @@ export function buildCli(): Command {
     .option("--skip-run", "Stop after planning and task generation", false)
     .option("--no-build-image", "Do not auto-build the worker image if missing")
     .option(
+      "--stop-containers-on-exit",
+      "Stop task containers when the CLI receives SIGINT/SIGTERM",
+      false,
+    )
+    .option(
       "--local-worker",
       "Run workers directly on the host without Docker (development/pilot)",
       false,
     )
     .action(async (opts) => {
       const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await autopilotCommand(opts.project, cfg, {
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await autopilotCommand(projectName, config, {
         planInput: opts.planInput,
         planOutput: opts.planOutput,
         runId: opts.runId,
@@ -56,23 +90,23 @@ export function buildCli(): Command {
         runDryRun: opts.dryRun,
         buildImage: opts.buildImage,
         useDocker: !opts.localWorker,
+        stopContainersOnExit: opts.stopContainersOnExit,
       });
     });
 
   program
     .command("plan")
-    .requiredOption(
+    .option(
       "--project <name>",
-      "Project name (config is resolved from ~/.task-orchestrator/projects)",
+      "Project name (default: repo folder name)",
     )
     .requiredOption("--input <path>", "Path to implementation-plan.md")
-    .option("--output <dir>", "Tasks output directory (default: <repo>/.tasks)")
+    .option("--output <dir>", "Tasks output directory (default: <repo>/.mycelium/tasks)")
     .option("--dry-run", "Do not write tasks; just print JSON", false)
     .action(async (opts) => {
       const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await planProject(opts.project, cfg, {
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await planProject(projectName, config, {
         input: opts.input,
         output: opts.output,
         dryRun: opts.dryRun,
@@ -81,7 +115,7 @@ export function buildCli(): Command {
 
   program
     .command("run")
-    .requiredOption("--project <name>", "Project name")
+    .option("--project <name>", "Project name (default: repo folder name)")
     .option("--tasks <ids>", "Comma-separated task IDs to run", (v: string) =>
       v
         .split(",")
@@ -93,31 +127,10 @@ export function buildCli(): Command {
     .option("--dry-run", "Plan batches but do not start containers", false)
     .option("--no-build-image", "Do not auto-build the worker image if missing")
     .option(
-      "--local-worker",
-      "Run workers directly on the host without Docker (development/pilot)",
+      "--stop-containers-on-exit",
+      "Stop task containers when the CLI receives SIGINT/SIGTERM",
       false,
     )
-    .action(async (opts) => {
-      const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await runCommand(opts.project, cfg, {
-        runId: opts.runId,
-        tasks: opts.tasks,
-        maxParallel: opts.maxParallel,
-        dryRun: opts.dryRun,
-        buildImage: opts.buildImage,
-        useDocker: !opts.localWorker,
-      });
-    });
-
-  program
-    .command("resume")
-    .requiredOption("--project <name>", "Project name")
-    .option("--run-id <id>", "Run ID (default: latest)")
-    .option("--max-parallel <n>", "Max parallel containers", (v) => parseInt(v, 10))
-    .option("--dry-run", "Plan batches but do not start containers", false)
-    .option("--no-build-image", "Do not auto-build the worker image if missing")
     .option(
       "--local-worker",
       "Run workers directly on the host without Docker (development/pilot)",
@@ -125,31 +138,61 @@ export function buildCli(): Command {
     )
     .action(async (opts) => {
       const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await resumeCommand(opts.project, cfg, {
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await runCommand(projectName, config, {
+        runId: opts.runId,
+        tasks: opts.tasks,
+        maxParallel: opts.maxParallel,
+        dryRun: opts.dryRun,
+        buildImage: opts.buildImage,
+        useDocker: !opts.localWorker,
+        stopContainersOnExit: opts.stopContainersOnExit,
+      });
+    });
+
+  program
+    .command("resume")
+    .option("--project <name>", "Project name (default: repo folder name)")
+    .option("--run-id <id>", "Run ID (default: latest)")
+    .option("--max-parallel <n>", "Max parallel containers", (v) => parseInt(v, 10))
+    .option("--dry-run", "Plan batches but do not start containers", false)
+    .option("--no-build-image", "Do not auto-build the worker image if missing")
+    .option(
+      "--stop-containers-on-exit",
+      "Stop task containers when the CLI receives SIGINT/SIGTERM",
+      false,
+    )
+    .option(
+      "--local-worker",
+      "Run workers directly on the host without Docker (development/pilot)",
+      false,
+    )
+    .action(async (opts) => {
+      const globals = program.opts();
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await resumeCommand(projectName, config, {
         runId: opts.runId,
         maxParallel: opts.maxParallel,
         dryRun: opts.dryRun,
         buildImage: opts.buildImage,
         useDocker: !opts.localWorker,
+        stopContainersOnExit: opts.stopContainersOnExit,
       });
     });
 
   program
     .command("status")
-    .requiredOption("--project <name>", "Project name")
+    .option("--project <name>", "Project name (default: repo folder name)")
     .option("--run-id <id>", "Run ID (default: latest)")
     .action(async (opts) => {
       const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await statusCommand(opts.project, cfg, { runId: opts.runId });
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await statusCommand(projectName, config, { runId: opts.runId });
     });
 
   program
     .command("clean")
-    .requiredOption("--project <name>", "Project name")
+    .option("--project <name>", "Project name (default: repo folder name)")
     .option("--run-id <id>", "Run ID (default: latest)")
     .option("--keep-logs", "Do not delete logs", false)
     .option("--dry-run", "Show cleanup targets without deleting", false)
@@ -157,9 +200,8 @@ export function buildCli(): Command {
     .option("--no-containers", "Skip Docker container cleanup", false)
     .action(async (opts) => {
       const globals = program.opts();
-      const configPath = globals.config ?? projectConfigPath(opts.project);
-      const cfg = loadProjectConfig(configPath);
-      await cleanCommand(opts.project, cfg, {
+      const { config, projectName } = resolveConfig(opts.project, globals.config);
+      await cleanCommand(projectName, config, {
         runId: opts.runId,
         keepLogs: opts.keepLogs,
         dryRun: opts.dryRun,

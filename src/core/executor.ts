@@ -19,6 +19,7 @@ import { ensureCleanWorkingTree, checkout } from "../git/git.js";
 import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
 import { ensureCodexAuthForHome } from "./codexAuth.js";
+import { resolveCodexReasoningEffort } from "./codex-reasoning.js";
 
 import type {
   DoctorValidatorConfig,
@@ -88,6 +89,32 @@ import { runManifestCompliance, type ManifestComplianceResult } from "./manifest
 import { computeRescopeFromCompliance } from "./manifest-rescope.js";
 import { isMockLlmEnabled } from "../llm/mock.js";
 
+const LABEL_PREFIX = "mycelium";
+
+function containerLabel(
+  labels: Record<string, string> | undefined,
+  key: string,
+): string | undefined {
+  if (!labels) return undefined;
+  return labels[`${LABEL_PREFIX}.${key}`];
+}
+
+function buildContainerLabels(values: {
+  projectName: string;
+  runId: string;
+  taskId: string;
+  branchName: string;
+  workspace: string;
+}): Record<string, string> {
+  return {
+    [`${LABEL_PREFIX}.project`]: values.projectName,
+    [`${LABEL_PREFIX}.run_id`]: values.runId,
+    [`${LABEL_PREFIX}.task_id`]: values.taskId,
+    [`${LABEL_PREFIX}.branch`]: values.branchName,
+    [`${LABEL_PREFIX}.workspace_path`]: values.workspace,
+  };
+}
+
 export type RunOptions = {
   runId?: string;
   resume?: boolean;
@@ -97,6 +124,8 @@ export type RunOptions = {
   buildImage?: boolean;
   cleanupOnSuccess?: boolean;
   useDocker?: boolean;
+  stopSignal?: AbortSignal;
+  stopContainersOnExit?: boolean;
 };
 
 export type BatchPlanEntry = {
@@ -105,7 +134,24 @@ export type BatchPlanEntry = {
   locks: BatchPlan["locks"];
 };
 
-export type RunResult = { runId: string; state: RunState; plan: BatchPlanEntry[] };
+export type RunResult = {
+  runId: string;
+  state: RunState;
+  plan: BatchPlanEntry[];
+  stopped?: RunStopInfo;
+};
+
+type RunStopInfo = {
+  reason: "signal";
+  signal?: string;
+  containers: "left_running" | "stopped";
+  stopContainersRequested: boolean;
+  stoppedContainers?: number;
+  stopErrors?: number;
+};
+
+type StopRequest = { kind: "signal"; signal?: string };
+type StopController = { readonly reason: StopRequest | null; cleanup: () => void };
 
 type TaskSuccessResult = {
   success: true;
@@ -193,33 +239,38 @@ export async function runProject(
   config: ProjectConfig,
   opts: RunOptions,
 ): Promise<RunResult> {
-  const isResume = opts.resume ?? false;
-  let runId: string;
+  const stopController = buildStopController(opts.stopSignal);
 
-  if (isResume) {
-    const resolvedRunId = opts.runId ?? (await findLatestRunId(projectName));
-    if (!resolvedRunId) {
-      throw new Error(`No runs found to resume for project ${projectName}.`);
+  try {
+    const isResume = opts.resume ?? false;
+    let runId: string;
+
+    if (isResume) {
+      const resolvedRunId = opts.runId ?? (await findLatestRunId(projectName));
+      if (!resolvedRunId) {
+        throw new Error(`No runs found to resume for project ${projectName}.`);
+      }
+      runId = resolvedRunId;
+    } else {
+      runId = opts.runId ?? defaultRunId();
     }
-    runId = resolvedRunId;
-  } else {
-    runId = opts.runId ?? defaultRunId();
-  }
-  const maxParallel = opts.maxParallel ?? config.max_parallel;
-  const cleanupOnSuccess = opts.cleanupOnSuccess ?? false;
-  const useDocker = opts.useDocker ?? true;
-  const plannedBatches: BatchPlanEntry[] = [];
+    const maxParallel = opts.maxParallel ?? config.max_parallel;
+    const cleanupOnSuccess = opts.cleanupOnSuccess ?? false;
+    const useDocker = opts.useDocker ?? true;
+    const stopContainersOnExit = opts.stopContainersOnExit ?? false;
+    const plannedBatches: BatchPlanEntry[] = [];
 
-  const repoPath = config.repo_path;
-  const workerImage = config.docker.image;
-  const containerResources = buildContainerResources(config.docker);
-  const containerSecurityPayload = buildContainerSecurityPayload(config.docker);
-  const networkMode = config.docker.network_mode;
-  const containerUser = config.docker.user;
+    const repoPath = config.repo_path;
+    const workerImage = config.docker.image;
+    const containerResources = buildContainerResources(config.docker);
+    const containerSecurityPayload = buildContainerSecurityPayload(config.docker);
+    const networkMode = config.docker.network_mode;
+    const containerUser = config.docker.user;
   const docker = useDocker ? dockerClient() : null;
   const manifestPolicy: ManifestEnforcementPolicy = config.manifest_enforcement ?? "warn";
   const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
   const mockLlmMode = isMockLlmEnabled() || config.worker.model === "mock";
+  let stopRequested: StopRequest | null = null;
 
   // Prepare directories
   await ensureDir(orchestratorHome());
@@ -412,6 +463,111 @@ export async function runProject(
     await stateStore.save(state);
   }
 
+  const resolveStopReason = (): StopRequest | null => {
+    if (stopRequested) return stopRequested;
+    const reason = stopController.reason;
+    if (reason) {
+      stopRequested = reason;
+    }
+    return stopRequested;
+  };
+
+  const stopIfRequested = async (): Promise<RunResult | null> => {
+    const reason = resolveStopReason();
+    if (!reason) return null;
+    return await stopRun(reason);
+  };
+
+  async function stopRun(reason: StopRequest): Promise<RunResult> {
+    const containerAction: RunStopInfo["containers"] =
+      stopContainersOnExit && useDocker && docker ? "stopped" : "left_running";
+    const stopSummary =
+      stopContainersOnExit && useDocker && docker ? await stopRunContainers() : null;
+    state.status = "running";
+
+    const payload: JsonObject = {
+      reason: reason.kind,
+      stop_containers_requested: stopContainersOnExit,
+      containers: containerAction,
+    };
+    if (reason.signal) payload.signal = reason.signal;
+    if (stopSummary) {
+      payload.containers_stopped = stopSummary.stopped;
+      if (stopSummary.errors > 0) {
+        payload.container_stop_errors = stopSummary.errors;
+      }
+    }
+
+    logOrchestratorEvent(orchLog, "run.stop", payload);
+    await stateStore.save(state);
+    closeValidatorLogs();
+    orchLog.close();
+
+    return {
+      runId,
+      state,
+      plan: plannedBatches,
+      stopped: {
+        reason: "signal",
+        signal: reason.signal,
+        containers: containerAction,
+        stopContainersRequested: stopContainersOnExit,
+        stoppedContainers: stopSummary?.stopped,
+        stopErrors: stopSummary?.errors ? stopSummary.errors : undefined,
+      },
+    };
+  }
+
+  async function stopRunContainers(): Promise<{ stopped: number; errors: number }> {
+    if (!docker) return { stopped: 0, errors: 0 };
+
+    const containers = await docker.listContainers({ all: true });
+    const matches = containers.filter(
+      (c) =>
+        containerLabel(c.Labels, "project") === projectName &&
+        containerLabel(c.Labels, "run_id") === runId,
+    );
+
+    let stopped = 0;
+    let errors = 0;
+
+    for (const c of matches) {
+      const containerName = firstContainerName(c.Names);
+      const taskId = containerLabel(c.Labels, "task_id");
+
+      try {
+        const container = docker.getContainer(c.Id);
+        try {
+          await container.stop({ t: 5 });
+        } catch {
+          // best-effort stop; continue to removal
+        }
+        await removeContainer(container);
+        stopped += 1;
+        const payload: JsonObject & { taskId?: string } = {
+          container_id: c.Id,
+          ...(containerName ? { name: containerName } : {}),
+        };
+        if (taskId) payload.taskId = taskId;
+        logOrchestratorEvent(orchLog, "container.stop", payload);
+      } catch (err) {
+        errors += 1;
+        const payload: JsonObject & { taskId?: string } = {
+          container_id: c.Id,
+          ...(containerName ? { name: containerName } : {}),
+          message: formatErrorMessage(err),
+        };
+        if (taskId) payload.taskId = taskId;
+        logOrchestratorEvent(orchLog, "container.stop_failed", payload);
+      }
+    }
+
+    return { stopped, errors };
+  }
+
+  const earlyStop = await stopIfRequested();
+  if (earlyStop) return earlyStop;
+
   // Main loop helpers
   let { completed, failed } = buildStatusSets(state);
   const doctorValidatorRunEvery = doctorValidatorConfig?.run_every_n_tasks;
@@ -496,7 +652,7 @@ export async function runProject(
     }
   };
 
-  const refreshTaskUsage = (taskId: string, taskSlug: string): TaskUsageUpdate | null => {
+  function refreshTaskUsage(taskId: string, taskSlug: string): TaskUsageUpdate | null {
     const taskState = state.tasks[taskId];
     if (!taskState) return null;
 
@@ -510,7 +666,7 @@ export async function runProject(
     taskState.estimated_cost = usage.estimatedCost;
 
     return { taskId, previousTokens, previousCost, usage };
-  };
+  }
 
   const logBudgetBreaches = (
     breaches: ReturnType<typeof detectBudgetBreaches>,
@@ -565,23 +721,20 @@ export async function runProject(
   ): Promise<{ id: string; name?: string } | null> => {
     if (!docker) return null;
 
-    const containers = await docker.listContainers({
-      all: true,
-      filters: {
-        label: [
-          `task-orchestrator.project=${projectName}`,
-          `task-orchestrator.run_id=${runId}`,
-        ],
-      },
-    });
+    const containers = await docker.listContainers({ all: true });
+    const matches = containers.filter(
+      (c) =>
+        containerLabel(c.Labels, "project") === projectName &&
+        containerLabel(c.Labels, "run_id") === runId,
+    );
 
-    const byTask = containers.find((c) => c.Labels?.["task-orchestrator.task_id"] === taskId);
+    const byTask = matches.find((c) => containerLabel(c.Labels, "task_id") === taskId);
     if (byTask) {
       return { id: byTask.Id, name: firstContainerName(byTask.Names) };
     }
 
     if (containerIdHint) {
-      const byId = containers.find(
+      const byId = matches.find(
         (c) => c.Id === containerIdHint || c.Id.startsWith(containerIdHint),
       );
       if (byId) {
@@ -1345,6 +1498,9 @@ export async function runProject(
 
   let batchId = Math.max(0, ...state.batches.map((b) => b.batch_id));
   while (true) {
+    const stopResult = await stopIfRequested();
+    if (stopResult) return stopResult;
+
     const runningBatch = findRunningBatch();
     if (runningBatch) {
       const batchTasks = tasks.filter((t) => runningBatch.tasks.includes(t.manifest.id));
@@ -1429,6 +1585,10 @@ export async function runProject(
         const tLogsDir = taskLogsDir(projectName, runId, taskId, taskSlug);
         const codexHome = workerCodexHomeDir(projectName, runId, taskId, taskSlug);
         const codexConfigPath = path.join(codexHome, "config.toml");
+        const codexReasoningEffort = resolveCodexReasoningEffort(
+          config.worker.model,
+          config.worker.reasoning_effort,
+        );
 
         await ensureDir(tLogsDir);
 
@@ -1450,6 +1610,7 @@ export async function runProject(
         await ensureDir(codexHome);
         await writeCodexConfig(codexConfigPath, {
           model: config.worker.model,
+          modelReasoningEffort: codexReasoningEffort,
           // "never" means no approval prompts (unattended runs). See Codex config reference.
           approvalPolicy: "never",
           sandboxMode: "danger-full-access",
@@ -1501,11 +1662,7 @@ export async function runProject(
             await removeContainer(existing);
           }
 
-          const codexHomeInContainer = path.posix.join(
-            "/workspace",
-            ".task-orchestrator",
-            "codex-home",
-          );
+          const codexHomeInContainer = path.posix.join("/workspace", ".mycelium", "codex-home");
 
           const container = await createContainer(docker, {
             name: containerName,
@@ -1541,6 +1698,7 @@ export async function runProject(
               BOOTSTRAP_CMDS:
                 config.bootstrap.length > 0 ? JSON.stringify(config.bootstrap) : undefined,
               CODEX_MODEL: config.worker.model,
+              CODEX_MODEL_REASONING_EFFORT: codexReasoningEffort,
               CODEX_HOME: codexHomeInContainer,
               RUN_LOGS_DIR: "/run-logs",
             },
@@ -1551,13 +1709,13 @@ export async function runProject(
             workdir: "/workspace",
             networkMode,
             resources: containerResources,
-            labels: {
-              "task-orchestrator.project": projectName,
-              "task-orchestrator.run_id": runId,
-              "task-orchestrator.task_id": taskId,
-              "task-orchestrator.branch": branchName,
-              "task-orchestrator.workspace_path": workspace,
-            },
+            labels: buildContainerLabels({
+              projectName,
+              runId,
+              taskId,
+              branchName,
+              workspace,
+            }),
           });
 
           const containerInfo = await container.inspect();
@@ -1652,6 +1810,7 @@ export async function runProject(
               runLogsDir: tLogsDir,
               codexHome,
               codexModel: config.worker.model,
+              codexReasoningEffort,
               checkpointCommits: config.worker.checkpoint_commits,
               workingDirectory: workspace,
               defaultTestPaths: config.test_paths,
@@ -1695,6 +1854,9 @@ export async function runProject(
     }
   }
 
+  const stopAfterLoop = await stopIfRequested();
+  if (stopAfterLoop) return stopAfterLoop;
+
   if (state.status === "running") {
     state.status = failed.size > 0 ? "failed" : "complete";
   }
@@ -1706,6 +1868,9 @@ export async function runProject(
 
   // Optional cleanup of successful workspaces can be added later.
   return { runId, state, plan: plannedBatches };
+  } finally {
+    stopController.cleanup();
+  }
 }
 
 async function summarizeTestValidatorResult(
@@ -1948,6 +2113,48 @@ function limitText(text: string, limit: number): string {
   return `${text.slice(0, limit)}\n... [truncated]`;
 }
 
+function buildStopController(signal?: AbortSignal): StopController {
+  let reason: StopRequest | null = null;
+
+  const onAbort = (): void => {
+    if (reason) return;
+    reason = { kind: "signal", signal: normalizeAbortReason(signal?.reason) };
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort);
+    }
+  }
+
+  return {
+    get reason() {
+      return reason;
+    },
+    cleanup() {
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    },
+  };
+}
+
+function normalizeAbortReason(reason: unknown): string | undefined {
+  if (reason === undefined || reason === null) return undefined;
+  if (typeof reason === "string") return reason;
+  if (reason instanceof Error) return reason.message;
+
+  if (typeof reason === "object") {
+    const value = reason as Record<string, unknown>;
+    if (typeof value.signal === "string") return value.signal;
+    if (typeof value.type === "string") return value.type;
+  }
+
+  return String(reason);
+}
+
 function buildStatusSets(state: RunState): { completed: Set<string>; failed: Set<string> } {
   const completed = new Set<string>(
     Object.entries(state.tasks)
@@ -2053,6 +2260,7 @@ async function writeCodexConfig(
   filePath: string,
   opts: {
     model: string;
+    modelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     // Valid values per Codex config reference.
     approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
     sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
@@ -2063,6 +2271,9 @@ async function writeCodexConfig(
   // We keep it intentionally minimal here.
   const content = [
     `model = "${opts.model}"`,
+    ...(opts.modelReasoningEffort
+      ? [`model_reasoning_effort = "${opts.modelReasoningEffort}"`]
+      : []),
     `approval_policy = "${opts.approvalPolicy}"`,
     `sandbox_mode = "${opts.sandboxMode}"`,
     "",
