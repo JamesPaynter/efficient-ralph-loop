@@ -7,6 +7,7 @@
 - Added a resume crash-recovery drill: mock Codex resume signalling, a Docker-gated Vitest that kills the orchestrator mid-run and reattaches on `resume`, and a manual runbook at docs/ops/resume-drill.md.
 - Added a Docker-mode mock smoke test (gated by `RUN_DOCKER_TESTS`) plus a `scripts/docker-smoke.sh` helper that builds the worker image, runs the fixture project through Docker, and verifies container logs/merge output.
 - Rebased documentation on current runtime behavior: rebuilt README, planning docs, and compliance checklist with implemented vs future tables; refreshed MVP scope to reflect autopilot/manifest enforcement/validators/resume reality.
+- Archived TODO snapshot to docs/history/todo-2026-01-19.md and marked the backlog complete for the current cycle.
 
 ## 2026-01-18
 - Archived current TODO list snapshot to docs/history/todo-2026-01-18.md and reset TODO for new work.
