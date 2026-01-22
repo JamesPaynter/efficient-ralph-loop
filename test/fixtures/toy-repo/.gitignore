@@ -1,0 +1,4 @@
+node_modules/
+.tasks/
+.mycelium/codex-home/
+.mycelium/worker-state.json

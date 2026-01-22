@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.DS_Store
+
+# Orchestrator runtime data
+.state/
+logs/
+workspaces/
+
+# Project/task artifacts
+.tasks/
+
+# Mycelium local artifacts
+.mycelium/logs/
+.mycelium/state/
+.mycelium/workspaces/
+.mycelium/codex/
+.mycelium/projects/
+.mycelium/codex-home/
+.mycelium/worker-state.json
+.mycelium/tasks/
+.mycelium/planning/sessions/
+
+# Local scratch
+old.TODO.md
+GPT-PRO-notes/
+
+# Env
+.env

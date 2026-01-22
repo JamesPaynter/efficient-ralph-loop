@@ -1,0 +1,102 @@
+# Example project configuration
+
+# Path to the target repo on your machine (env vars like ${HOME} are allowed).
+# Relative paths are resolved from the directory containing this YAML file.
+repo_path: /absolute/path/to/your/repo
+
+# Integration branch the orchestrator merges into
+main_branch: development-codex
+
+# Task branches are created as: <task_branch_prefix><id>-<name>
+task_branch_prefix: agent/
+
+# Where Mycelium stores planned task specs + manifests within the target repo
+tasks_dir: .mycelium/tasks
+
+# Where Mycelium stores planning artifacts (implementation plan, sessions, etc.)
+planning_dir: .mycelium/planning
+
+# Manifest enforcement policy: off | warn | block
+manifest_enforcement: warn
+
+# Limits
+max_parallel: 3
+max_retries: 20
+timeout_minutes: 120
+budgets:
+  mode: warn
+  max_tokens_per_task: 200000
+  max_cost_per_run: 25
+
+# Wrap doctor in a script that exits non-zero when ORCH_CANARY=1 so the orchestrator can prove it runs.
+doctor: "npm test"
+doctor_timeout: 900
+
+# Optional bootstrap commands executed inside each worker container before Codex runs.
+# Use this to install dependencies.
+bootstrap:
+  - npm ci
+
+# Paths considered tests (used for strict TDD enforcement)
+test_paths:
+  - "**/__tests__/**"
+  - "**/tests/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+
+# Define abstract resources for safe scheduling
+resources:
+  - name: backend
+    description: Backend code
+    paths:
+      - src/server/*
+  - name: frontend
+    description: Frontend code
+    paths:
+      - src/client/*
+  - name: build-system
+    description: Build configuration
+    paths:
+      - package.json
+      - package-lock.json
+      - pnpm-lock.yaml
+      - yarn.lock
+      - Dockerfile*
+
+planner:
+  provider: codex
+  model: o3
+  # For Anthropic, set provider to "anthropic", set model to a Claude variant,
+  # and add anthropic_api_key / anthropic_base_url if you prefer config-based auth.
+
+worker:
+  model: gpt-5.1-codex-max
+  checkpoint_commits: true
+
+test_validator:
+  mode: warn
+  provider: openai
+  model: o3
+
+doctor_validator:
+  mode: warn
+  provider: openai
+  model: o3
+  run_every_n_tasks: 10
+  # Anthropic works here too (set provider to "anthropic" and provide a Claude model).
+
+log_summaries:
+  enabled: false
+  provider: openai
+  model: gpt-4o-mini
+
+# Docker worker image (paths resolve relative to this file when not absolute)
+docker:
+  image: mycelium-worker:latest
+  dockerfile: /absolute/path/to/mycelium/templates/Dockerfile
+  build_context: /absolute/path/to/mycelium
+  user: worker
+  network_mode: bridge # set to "none" for offline runs when dependencies are already available
+  memory_mb: 2048
+  cpu_quota: 100000
+  pids_limit: 512

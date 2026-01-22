@@ -1,0 +1,148 @@
+import { z } from "zod";
+
+import { DEFAULT_TEST_PATHS } from "./test-paths.js";
+
+// =============================================================================
+// SCHEMAS
+// =============================================================================
+
+const LlmProviderSchema = z.enum(["openai", "anthropic", "codex", "mock"]);
+export const ValidatorModeSchema = z.enum(["off", "warn", "block"]);
+
+const ResourceSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    paths: z.array(z.string()).min(1),
+  })
+  .strict();
+
+const PlannerSchema = z
+  .object({
+    provider: LlmProviderSchema.default("codex"),
+    model: z.string().min(1),
+    temperature: z.number().min(0).max(2).optional(),
+    timeout_seconds: z.number().int().positive().optional(),
+    anthropic_api_key: z.string().min(1).optional(),
+    anthropic_base_url: z.string().min(1).optional(),
+  })
+  .strict();
+
+const WorkerSchema = z
+  .object({
+    model: z.string().min(1),
+    // Optional Codex config field (written to config.toml as model_reasoning_effort).
+    // This is intentionally permissive because support depends on the model family.
+    reasoning_effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+    max_retries: z.number().int().positive().optional(),
+    checkpoint_commits: z.boolean().default(true),
+  })
+  .strict();
+
+const ValidatorSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    mode: ValidatorModeSchema.default("warn"),
+    provider: LlmProviderSchema.default("openai"),
+    model: z.string().min(1),
+    temperature: z.number().min(0).max(2).optional(),
+    timeout_seconds: z.number().int().positive().optional(),
+    anthropic_api_key: z.string().min(1).optional(),
+    anthropic_base_url: z.string().min(1).optional(),
+  })
+  .strict();
+
+const DoctorValidatorSchema = ValidatorSchema.extend({
+  run_every_n_tasks: z.number().int().positive().default(10),
+}).strict();
+
+const LogSummariesSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    provider: LlmProviderSchema.default("openai"),
+    model: z.string().min(1).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    timeout_seconds: z.number().int().positive().optional(),
+    anthropic_api_key: z.string().min(1).optional(),
+    anthropic_base_url: z.string().min(1).optional(),
+  })
+  .strict();
+
+const BudgetsSchema = z
+  .object({
+    max_tokens_per_task: z.number().int().positive().optional(),
+    max_cost_per_run: z.number().nonnegative().optional(),
+    mode: z.enum(["warn", "block"]).default("warn"),
+  })
+  .strict();
+
+const DockerNetworkModeSchema = z.enum(["bridge", "none"]);
+
+const DockerSchema = z
+  .object({
+    image: z.string().min(1).default("mycelium-worker:latest"),
+    dockerfile: z.string().default("templates/Dockerfile"),
+    build_context: z.string().default("."),
+    user: z.string().min(1).default("worker"),
+    network_mode: DockerNetworkModeSchema.default("bridge"),
+    memory_mb: z.number().int().positive().optional(),
+    cpu_quota: z.number().int().positive().optional(),
+    pids_limit: z.number().int().positive().optional(),
+  })
+  .strict();
+
+const ManifestEnforcementSchema = z.enum(["off", "warn", "block"]).default("warn");
+
+export const ProjectConfigSchema = z
+  .object({
+    repo_path: z.string().min(1),
+    main_branch: z.string().min(1).default("development-codex"),
+    task_branch_prefix: z.string().min(1).default("agent/"),
+
+    // Where Mycelium stores planned task specs + manifests for the target repo.
+    tasks_dir: z.string().min(1).default(".mycelium/tasks"),
+
+    // Where Mycelium stores planning artifacts (implementation plan, sessions, etc.).
+    planning_dir: z.string().min(1).default(".mycelium/planning"),
+
+    max_parallel: z.number().int().positive().default(4),
+    max_retries: z.number().int().positive().default(20),
+    timeout_minutes: z.number().int().positive().optional(),
+
+    doctor: z.string().min(1),
+    doctor_timeout: z.number().int().positive().optional(),
+
+    // Optional: run once in the worker container before Codex starts.
+    // Example: ["npm ci", "npm test -- --help"]
+    bootstrap: z.array(z.string()).default([]),
+
+    test_paths: z.array(z.string()).default(DEFAULT_TEST_PATHS),
+
+    resources: z.array(ResourceSchema).min(1),
+
+    docker: DockerSchema.default({}),
+    manifest_enforcement: ManifestEnforcementSchema.default("warn"),
+
+    planner: PlannerSchema,
+    worker: WorkerSchema,
+
+    test_validator: ValidatorSchema.optional(),
+    doctor_validator: DoctorValidatorSchema.optional(),
+    log_summaries: LogSummariesSchema.optional(),
+    budgets: BudgetsSchema.default({}),
+  })
+  .strict();
+
+export type LlmProvider = z.infer<typeof LlmProviderSchema>;
+export type BudgetsConfig = z.infer<typeof BudgetsSchema>;
+export type PlannerConfig = z.infer<typeof PlannerSchema>;
+export type WorkerConfig = z.infer<typeof WorkerSchema>;
+export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
+export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
+export type LogSummaryConfig = z.infer<typeof LogSummariesSchema>;
+export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
+export type ResourceConfig = z.infer<typeof ResourceSchema>;
+export type DockerConfig = z.infer<typeof DockerSchema>;
+export type DockerNetworkMode = z.infer<typeof DockerNetworkModeSchema>;
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+export type ManifestEnforcementPolicy = z.infer<typeof ManifestEnforcementSchema>;

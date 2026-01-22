@@ -1,0 +1,68 @@
+{
+  "name": "mycelium",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mycelium: Codex-powered task orchestration for long-running software delivery",
+  "license": "Apache-2.0",
+  "bin": {
+    "mycelium": "./bin/mycelium"
+  },
+  "files": [
+    "dist/**/*",
+    "bin/mycelium",
+    "templates/**/*",
+    "README.md",
+    "LICENSE",
+    "GPT-PRO-notes/**/*"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:worker": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --ext .ts,.js,.cjs,.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev": "tsx src/main.ts",
+    "logs:query": "tsx src/main.ts logs query --use-index",
+    "logs:search": "tsx src/main.ts logs search --use-index",
+    "start": "node dist/index.js",
+    "worker": "node dist/worker/index.js",
+    "worker:dev": "tsx worker/index.ts",
+    "pack:smoke": "bash scripts/pack-smoke.sh",
+    "docker:build-worker": "docker build -f templates/Dockerfile -t mycelium-worker:latest .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@openai/codex-sdk": "^0.77.0",
+    "better-sqlite3": "^12.6.0",
+    "commander": "^12.1.0",
+    "dockerode": "^4.0.2",
+    "execa": "^9.5.0",
+    "fast-glob": "^3.3.2",
+    "fs-extra": "^11.2.0",
+    "handlebars": "^4.7.8",
+    "js-yaml": "^4.1.0",
+    "minimatch": "^9.0.4",
+    "openai": "^6.16.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/dockerode": "^3.3.47",
+    "@types/fs-extra": "^11.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.30",
+    "@typescript-eslint/eslint-plugin": "^8.52.0",
+    "@typescript-eslint/parser": "^8.52.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import": "^2.32.0",
+    "prettier": "^3.7.4",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.0.16"
+  }
+}
