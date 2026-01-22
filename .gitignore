@@ -11,15 +11,7 @@ workspaces/
 .tasks/
 
 # Mycelium local artifacts
-.mycelium/logs/
-.mycelium/state/
-.mycelium/workspaces/
-.mycelium/codex/
-.mycelium/projects/
-.mycelium/codex-home/
-.mycelium/worker-state.json
-.mycelium/tasks/
-.mycelium/planning/sessions/
+.mycelium/
 
 # Local scratch
 old.TODO.md

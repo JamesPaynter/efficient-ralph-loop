@@ -1774,8 +1774,8 @@ export async function runProject(
               success: false as const,
             };
           } finally {
-            await logStream.completed.catch(() => undefined);
             logStream.detach();
+            await logStream.completed.catch(() => undefined);
             taskEvents.close();
           }
         }
