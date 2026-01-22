@@ -1,6 +1,7 @@
 export const CONTROL_PLANE_ERROR_CODES = {
   modelNotBuilt: "MODEL_NOT_BUILT",
   notImplemented: "NOT_IMPLEMENTED",
+  modelStoreError: "MODEL_STORE_ERROR",
 } as const;
 
 export type ControlPlaneErrorCode =
