@@ -14,7 +14,9 @@ import {
   emitModelNotBuiltError,
   emitNotImplementedError,
 } from "../control-plane/cli/output.js";
+import { computeBlastRadius } from "../control-plane/blast.js";
 import { resolveOwnershipForPath } from "../control-plane/extract/ownership.js";
+import { listChangedPaths } from "../control-plane/git.js";
 import { buildControlPlaneModel, getControlPlaneModelInfo } from "../control-plane/model/build.js";
 import {
   resolveComponentDependencies,
@@ -116,8 +118,13 @@ export function registerControlPlaneCommand(program: Command): void {
   controlPlane
     .command("blast")
     .description("Estimate blast radius for a change")
-    .argument("[targets...]", "Paths or components to evaluate")
-    .action(createModelNotBuiltAction());
+    .argument("[targets...]", "Paths to treat as changed")
+    .option("--changed <paths...>", "Paths to treat as changed")
+    .option("--diff <range>", "Git diff rev range (e.g., HEAD~1..HEAD)")
+    .option("--against <ref>", "Git ref to diff against HEAD")
+    .action(async (targets, opts, command) => {
+      await handleBlastQuery(targets as string[], opts as BlastQueryOptions, command);
+    });
 
   const symbols = controlPlane
     .command("symbols")
@@ -370,6 +377,59 @@ async function handleDependencyQuery(
       edges: modelResult.model.deps.edges,
       transitive: options.transitive ?? false,
       limit: options.limit ?? null,
+    });
+
+    emitControlPlaneResult(result, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+
+
+// =============================================================================
+// BLAST QUERY
+// =============================================================================
+
+type BlastQueryOptions = {
+  changed?: string[];
+  diff?: string;
+  against?: string;
+};
+
+async function handleBlastQuery(
+  targets: string[],
+  options: BlastQueryOptions,
+  command: Command,
+): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const modelResult = await loadControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      shouldBuild: flags.shouldBuild,
+    });
+
+    if (!modelResult) {
+      emitModelNotBuiltError(MODEL_NOT_BUILT_MESSAGE, output);
+      return;
+    }
+
+    const changedInput =
+      options.changed && options.changed.length > 0 ? options.changed : targets;
+    const changedPaths = await listChangedPaths({
+      repoRoot: flags.repoPath,
+      changed: changedInput,
+      diff: options.diff ?? null,
+      against: options.against ?? null,
+    });
+
+    const result = computeBlastRadius({
+      changedPaths,
+      model: modelResult.model,
     });
 
     emitControlPlaneResult(result, output);
