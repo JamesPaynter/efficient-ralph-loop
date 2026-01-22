@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { extractComponents } from "../extract/components.js";
 import { buildOwnershipIndex } from "../extract/ownership.js";
+import { buildControlPlaneDependencies } from "./deps.js";
 import {
   createControlPlaneMetadata,
   isMetadataCompatible,
@@ -41,7 +42,7 @@ export type ControlPlaneModelInfo = {
 const EXTRACTOR_VERSIONS: ControlPlaneExtractorVersions = {
   components: "v1",
   ownership: "v1",
-  deps: "stub",
+  deps: "v1",
   symbols: "stub",
 };
 
@@ -90,10 +91,12 @@ export async function buildControlPlaneModel(
 
     const { components } = await extractComponents(repoRoot);
     const ownership = buildOwnershipIndex(components);
+    const deps = await buildControlPlaneDependencies({ repoRoot, components });
 
     const model = createEmptyModel();
     model.components = components;
     model.ownership = ownership;
+    model.deps = deps;
     const modelHash = hashModel(model);
     const metadata = createControlPlaneMetadata({
       baseSha,
