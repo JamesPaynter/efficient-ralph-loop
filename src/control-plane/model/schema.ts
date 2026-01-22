@@ -1,8 +1,8 @@
 // Control plane model schema definitions.
 // Purpose: define the JSON shape and schema version for persisted models.
-// Assumes higher-level builders supply data for components/ownership/dependencies/symbols.
+// Assumes higher-level builders supply data for components/ownership/deps/symbols.
 
-export const MODEL_SCHEMA_VERSION = 2;
+export const MODEL_SCHEMA_VERSION = 3;
 
 
 
@@ -29,10 +29,26 @@ export type ControlPlaneOwnership = {
   roots: ControlPlaneOwnershipRoot[];
 };
 
+export type ControlPlaneDependencyKind = "workspace-package" | "ts-import";
+
+export type ControlPlaneDependencyConfidence = "high" | "medium" | "low";
+
+export type ControlPlaneDependencyEdge = {
+  from_component: string;
+  to_component: string;
+  kind: ControlPlaneDependencyKind;
+  confidence: ControlPlaneDependencyConfidence;
+  evidence?: Record<string, string>;
+};
+
+export type ControlPlaneDependencies = {
+  edges: ControlPlaneDependencyEdge[];
+};
+
 export type ControlPlaneModel = {
   components: ControlPlaneComponent[];
   ownership: ControlPlaneOwnership;
-  dependencies: unknown[];
+  deps: ControlPlaneDependencies;
   symbols: unknown[];
 };
 
@@ -46,7 +62,7 @@ export function createEmptyModel(): ControlPlaneModel {
   return {
     components: [],
     ownership: { roots: [] },
-    dependencies: [],
+    deps: { edges: [] },
     symbols: [],
   };
 }

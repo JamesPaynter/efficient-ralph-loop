@@ -16,6 +16,10 @@ import {
 } from "../control-plane/cli/output.js";
 import { resolveOwnershipForPath } from "../control-plane/extract/ownership.js";
 import { buildControlPlaneModel, getControlPlaneModelInfo } from "../control-plane/model/build.js";
+import {
+  resolveComponentDependencies,
+  resolveComponentReverseDependencies,
+} from "../control-plane/model/deps.js";
 import type { ControlPlaneModel } from "../control-plane/model/schema.js";
 import { ControlPlaneBuildLockError, ControlPlaneStore } from "../control-plane/storage.js";
 
@@ -83,13 +87,31 @@ export function registerControlPlaneCommand(program: Command): void {
     .command("deps")
     .description("Show dependencies for a component")
     .argument("<component>", "Component id")
-    .action(createModelNotBuiltAction());
+    .option("--transitive", "Include transitive dependencies", false)
+    .option("--limit <n>", "Limit number of edges", (value) => parseInt(value, 10))
+    .action(async (componentId, opts, command) => {
+      await handleDependencyQuery(
+        String(componentId),
+        "deps",
+        opts as DependencyQueryOptions,
+        command,
+      );
+    });
 
   controlPlane
     .command("rdeps")
     .description("Show reverse dependencies for a component")
     .argument("<component>", "Component id")
-    .action(createModelNotBuiltAction());
+    .option("--transitive", "Include transitive dependencies", false)
+    .option("--limit <n>", "Limit number of edges", (value) => parseInt(value, 10))
+    .action(async (componentId, opts, command) => {
+      await handleDependencyQuery(
+        String(componentId),
+        "rdeps",
+        opts as DependencyQueryOptions,
+        command,
+      );
+    });
 
   controlPlane
     .command("blast")
@@ -301,6 +323,54 @@ async function handleOwnerLookup(targetPath: string, command: Command): Promise<
       modelResult.model.components,
       repoRelativePath,
     );
+
+    emitControlPlaneResult(result, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+
+
+// =============================================================================
+// DEPENDENCY QUERIES
+// =============================================================================
+
+type DependencyQueryOptions = {
+  transitive?: boolean;
+  limit?: number;
+};
+
+async function handleDependencyQuery(
+  componentId: string,
+  direction: "deps" | "rdeps",
+  options: DependencyQueryOptions,
+  command: Command,
+): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const modelResult = await loadControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      shouldBuild: flags.shouldBuild,
+    });
+
+    if (!modelResult) {
+      emitModelNotBuiltError(MODEL_NOT_BUILT_MESSAGE, output);
+      return;
+    }
+
+    const query =
+      direction === "deps" ? resolveComponentDependencies : resolveComponentReverseDependencies;
+    const result = query({
+      componentId,
+      edges: modelResult.model.deps.edges,
+      transitive: options.transitive ?? false,
+      limit: options.limit ?? null,
+    });
 
     emitControlPlaneResult(result, output);
   } catch (error) {
