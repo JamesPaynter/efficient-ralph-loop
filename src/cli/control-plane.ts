@@ -1,8 +1,19 @@
 import { Command } from "commander";
 
 import { registerControlPlaneFlags, resolveControlPlaneFlags } from "../control-plane/cli/flags.js";
-import type { ControlPlaneOutputOptions } from "../control-plane/cli/output.js";
-import { emitModelNotBuiltError, emitNotImplementedError } from "../control-plane/cli/output.js";
+import type {
+  ControlPlaneJsonError,
+  ControlPlaneOutputOptions,
+} from "../control-plane/cli/output.js";
+import {
+  CONTROL_PLANE_ERROR_CODES,
+  emitControlPlaneError,
+  emitControlPlaneResult,
+  emitModelNotBuiltError,
+  emitNotImplementedError,
+} from "../control-plane/cli/output.js";
+import { buildControlPlaneModel, getControlPlaneModelInfo } from "../control-plane/model/build.js";
+import { ControlPlaneBuildLockError } from "../control-plane/storage.js";
 
 const MODEL_NOT_BUILT_MESSAGE =
   "Control plane model not built. Run `mycelium cp build` to generate it.";
@@ -25,12 +36,17 @@ export function registerControlPlaneCommand(program: Command): void {
   controlPlane
     .command("build")
     .description("Build the repository navigation model")
-    .action(createNotImplementedAction("Control plane build is not implemented yet."));
+    .option("--force", "Rebuild the navigation model even if cached", false)
+    .action(async (opts, command) => {
+      await handleControlPlaneBuild(opts, command);
+    });
 
   controlPlane
     .command("info")
     .description("Show navigation model metadata")
-    .action(createModelNotBuiltAction());
+    .action(async (_opts, command) => {
+      await handleControlPlaneInfo(command);
+    });
 
   const components = controlPlane
     .command("components")
@@ -125,4 +141,70 @@ function createErrorAction(
 function resolveOutputOptions(command: Command): ControlPlaneOutputOptions {
   const flags = resolveControlPlaneFlags(command);
   return { useJson: flags.useJson, prettyJson: flags.prettyJson };
+}
+
+
+
+// =============================================================================
+// BUILD + INFO ACTIONS
+// =============================================================================
+
+async function handleControlPlaneBuild(
+  opts: { force?: boolean },
+  command: Command,
+): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const result = await buildControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      force: opts.force ?? false,
+    });
+    emitControlPlaneResult(result, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+async function handleControlPlaneInfo(command: Command): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const result = await getControlPlaneModelInfo({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+    });
+    emitControlPlaneResult(result, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+function resolveModelStoreError(error: unknown): ControlPlaneJsonError {
+  if (error instanceof ControlPlaneBuildLockError) {
+    return {
+      code: CONTROL_PLANE_ERROR_CODES.modelStoreError,
+      message: error.message,
+      details: { lock_path: error.lockPath },
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      code: CONTROL_PLANE_ERROR_CODES.modelStoreError,
+      message: error.message,
+      details: { name: error.name },
+    };
+  }
+
+  return {
+    code: CONTROL_PLANE_ERROR_CODES.modelStoreError,
+    message: "Control plane command failed.",
+    details: null,
+  };
 }

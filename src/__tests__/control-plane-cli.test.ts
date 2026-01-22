@@ -35,7 +35,9 @@ function isHelpExit(error: unknown): boolean {
 
 function collectStdout(writeSpy: ReturnType<typeof vi.spyOn>): string {
   return writeSpy.mock.calls
-    .map(([chunk]) => (typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")))
+    .map(([chunk]: [string | Uint8Array]) =>
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+    )
     .join("");
 }
 
