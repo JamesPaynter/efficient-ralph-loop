@@ -1,9 +1,19 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { Command } from "commander";
+import { execa } from "execa";
+import fse from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildCli } from "../cli/index.js";
 
 const HELP_ERROR_CODE = "commander.helpDisplayed";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/control-plane-mini-repo");
+const tempDirs: string[] = [];
 
 
 
@@ -49,6 +59,25 @@ function installExitOverride(command: Command): void {
   }
 }
 
+async function createTempRepoFromFixture(): Promise<string> {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cp-cli-"));
+  tempDirs.push(tempRoot);
+
+  const repoDir = path.join(tempRoot, "repo");
+  await fse.copy(FIXTURE_REPO, repoDir);
+  await initGitRepo(repoDir);
+
+  return repoDir;
+}
+
+async function initGitRepo(repoDir: string): Promise<void> {
+  await execa("git", ["init"], { cwd: repoDir });
+  await execa("git", ["config", "user.email", "cp-cli@example.com"], { cwd: repoDir });
+  await execa("git", ["config", "user.name", "Control Plane CLI"], { cwd: repoDir });
+  await execa("git", ["add", "-A"], { cwd: repoDir });
+  await execa("git", ["commit", "-m", "init"], { cwd: repoDir });
+}
+
 
 
 // =============================================================================
@@ -56,9 +85,14 @@ function installExitOverride(command: Command): void {
 // =============================================================================
 
 describe("control-plane CLI", () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
     process.exitCode = 0;
+
+    for (const dir of tempDirs) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+    tempDirs.length = 0;
   });
 
   it("renders help for the cp alias", async () => {
@@ -70,10 +104,21 @@ describe("control-plane CLI", () => {
     expect(output).toContain("control-plane");
   });
 
-  it("prints a JSON error envelope for stub commands", async () => {
+  it("returns a JSON error when --no-build is set", async () => {
+    const repoDir = await createTempRepoFromFixture();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await runCli(["node", "mycelium", "cp", "components", "list", "--json"]);
+    await runCli([
+      "node",
+      "mycelium",
+      "cp",
+      "components",
+      "list",
+      "--json",
+      "--no-build",
+      "--repo",
+      repoDir,
+    ]);
 
     const jsonLine = logSpy.mock.calls.map((call) => call.join(" ")).pop() ?? "";
     const payload = JSON.parse(jsonLine) as { ok: boolean; error?: { code?: string; message?: string } };
@@ -82,5 +127,21 @@ describe("control-plane CLI", () => {
     expect(payload.error?.code).toBe("MODEL_NOT_BUILT");
     expect(payload.error?.message).toEqual(expect.any(String));
     expect(process.exitCode).toBe(1);
+  });
+
+  it("auto-builds the model for components list queries", async () => {
+    const repoDir = await createTempRepoFromFixture();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runCli(["node", "mycelium", "cp", "components", "list", "--json", "--repo", repoDir]);
+
+    const jsonLine = logSpy.mock.calls.map((call) => call.join(" ")).pop() ?? "";
+    const payload = JSON.parse(jsonLine) as { ok: boolean; result?: unknown };
+
+    expect(payload.ok).toBe(true);
+    expect(Array.isArray(payload.result)).toBe(true);
+    const result = payload.result as Array<{ id?: string }>;
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.map((component) => component.id)).toContain("acme-web-app");
   });
 });

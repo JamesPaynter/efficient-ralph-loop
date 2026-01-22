@@ -1,10 +1,12 @@
 // Control plane model build orchestration.
 // Purpose: resolve revisions, coordinate locks, and populate the file-backed cache.
-// Assumes extractor outputs are currently empty stubs.
+// Assumes extractor versions track compatibility for stored artifacts.
 
 import crypto from "node:crypto";
 import path from "node:path";
 
+import { extractComponents } from "../extract/components.js";
+import { buildOwnershipIndex } from "../extract/ownership.js";
 import {
   createControlPlaneMetadata,
   isMetadataCompatible,
@@ -37,7 +39,8 @@ export type ControlPlaneModelInfo = {
 };
 
 const EXTRACTOR_VERSIONS: ControlPlaneExtractorVersions = {
-  components: "stub",
+  components: "v1",
+  ownership: "v1",
   deps: "stub",
   symbols: "stub",
 };
@@ -85,7 +88,12 @@ export async function buildControlPlaneModel(
       };
     }
 
+    const { components } = await extractComponents(repoRoot);
+    const ownership = buildOwnershipIndex(components);
+
     const model = createEmptyModel();
+    model.components = components;
+    model.ownership = ownership;
     const modelHash = hashModel(model);
     const metadata = createControlPlaneMetadata({
       baseSha,

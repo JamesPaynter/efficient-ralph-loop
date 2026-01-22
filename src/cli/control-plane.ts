@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { Command } from "commander";
 
 import { registerControlPlaneFlags, resolveControlPlaneFlags } from "../control-plane/cli/flags.js";
@@ -12,8 +14,10 @@ import {
   emitModelNotBuiltError,
   emitNotImplementedError,
 } from "../control-plane/cli/output.js";
+import { resolveOwnershipForPath } from "../control-plane/extract/ownership.js";
 import { buildControlPlaneModel, getControlPlaneModelInfo } from "../control-plane/model/build.js";
-import { ControlPlaneBuildLockError } from "../control-plane/storage.js";
+import type { ControlPlaneModel } from "../control-plane/model/schema.js";
+import { ControlPlaneBuildLockError, ControlPlaneStore } from "../control-plane/storage.js";
 
 const MODEL_NOT_BUILT_MESSAGE =
   "Control plane model not built. Run `mycelium cp build` to generate it.";
@@ -55,19 +59,25 @@ export function registerControlPlaneCommand(program: Command): void {
   components
     .command("list")
     .description("List known components")
-    .action(createModelNotBuiltAction());
+    .action(async (_opts, command) => {
+      await handleComponentsList(command);
+    });
 
   components
     .command("show")
     .description("Show component details")
     .argument("<id>", "Component id")
-    .action(createModelNotBuiltAction());
+    .action(async (id, command) => {
+      await handleComponentsShow(id, command);
+    });
 
   controlPlane
     .command("owner")
     .description("Show owning component for a path")
     .argument("<path>", "Path to inspect")
-    .action(createModelNotBuiltAction());
+    .action(async (targetPath, command) => {
+      await handleOwnerLookup(targetPath, command);
+    });
 
   controlPlane
     .command("deps")
@@ -207,4 +217,135 @@ function resolveModelStoreError(error: unknown): ControlPlaneJsonError {
     message: "Control plane command failed.",
     details: null,
   };
+}
+
+
+
+// =============================================================================
+// COMPONENT + OWNER QUERIES
+// =============================================================================
+
+async function handleComponentsList(command: Command): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const modelResult = await loadControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      shouldBuild: flags.shouldBuild,
+    });
+
+    if (!modelResult) {
+      emitModelNotBuiltError(MODEL_NOT_BUILT_MESSAGE, output);
+      return;
+    }
+
+    emitControlPlaneResult(modelResult.model.components, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+async function handleComponentsShow(componentId: string, command: Command): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const modelResult = await loadControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      shouldBuild: flags.shouldBuild,
+    });
+
+    if (!modelResult) {
+      emitModelNotBuiltError(MODEL_NOT_BUILT_MESSAGE, output);
+      return;
+    }
+
+    const component =
+      modelResult.model.components.find((entry) => entry.id === componentId) ?? null;
+
+    emitControlPlaneResult(component, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+async function handleOwnerLookup(targetPath: string, command: Command): Promise<void> {
+  const output = resolveOutputOptions(command);
+  const flags = resolveControlPlaneFlags(command);
+
+  try {
+    const modelResult = await loadControlPlaneModel({
+      repoRoot: flags.repoPath,
+      baseSha: flags.revision.baseSha,
+      ref: flags.revision.ref,
+      shouldBuild: flags.shouldBuild,
+    });
+
+    if (!modelResult) {
+      emitModelNotBuiltError(MODEL_NOT_BUILT_MESSAGE, output);
+      return;
+    }
+
+    const repoRelativePath = resolveRepoRelativePath(flags.repoPath, targetPath);
+    const result = resolveOwnershipForPath(
+      modelResult.model.ownership,
+      modelResult.model.components,
+      repoRelativePath,
+    );
+
+    emitControlPlaneResult(result, output);
+  } catch (error) {
+    emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+
+
+// =============================================================================
+// MODEL LOADING
+// =============================================================================
+
+async function loadControlPlaneModel(options: {
+  repoRoot: string;
+  baseSha: string | null;
+  ref: string | null;
+  shouldBuild: boolean;
+}): Promise<{ model: ControlPlaneModel; baseSha: string } | null> {
+  if (options.shouldBuild) {
+    const buildResult = await buildControlPlaneModel({
+      repoRoot: options.repoRoot,
+      baseSha: options.baseSha,
+      ref: options.ref,
+    });
+    const store = new ControlPlaneStore(options.repoRoot);
+    const model = await store.readModel(buildResult.base_sha);
+    return model ? { model, baseSha: buildResult.base_sha } : null;
+  }
+
+  const info = await getControlPlaneModelInfo({
+    repoRoot: options.repoRoot,
+    baseSha: options.baseSha,
+    ref: options.ref,
+  });
+
+  if (!info.exists) {
+    return null;
+  }
+
+  const store = new ControlPlaneStore(options.repoRoot);
+  const model = await store.readModel(info.base_sha);
+  return model ? { model, baseSha: info.base_sha } : null;
+}
+
+function resolveRepoRelativePath(repoRoot: string, targetPath: string): string {
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  const resolvedTarget = path.isAbsolute(targetPath)
+    ? path.normalize(targetPath)
+    : path.resolve(resolvedRepoRoot, targetPath);
+  return path.relative(resolvedRepoRoot, resolvedTarget);
 }
