@@ -140,4 +140,18 @@ describe("control-plane blast radius", () => {
     expect(result.impacted_components).toEqual(sortComponentIds(components));
     expect(result.warnings.join(" ").toLowerCase()).toContain("unmapped");
   });
+
+  it("widens impacted components when dependency info is missing", () => {
+    const { model, components } = createModelWithEdges([]);
+
+    const result = computeBlastRadius({
+      changedPaths: ["packages/lib/src/index.ts"],
+      model,
+    });
+
+    expect(result.touched_components).toEqual(["lib"]);
+    expect(result.confidence).toBe("low");
+    expect(result.impacted_components).toEqual(sortComponentIds(components));
+    expect(result.warnings.join(" ").toLowerCase()).toContain("dependency");
+  });
 });

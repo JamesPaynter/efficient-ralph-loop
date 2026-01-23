@@ -43,6 +43,8 @@ const WARNING_MEDIUM =
   "Medium-confidence dependency edges included in blast radius.";
 const WARNING_LOW =
   "Low-confidence dependency edges detected; widening impacted components to all components.";
+const WARNING_MISSING_DEPS =
+  "Dependency graph missing; widening impacted components to all components.";
 
 
 
@@ -62,6 +64,18 @@ export function computeBlastRadius(input: ControlPlaneBlastInput): ControlPlaneB
 
   if (mapped.unmappedPaths.length > 0) {
     warnings.push(WARNING_UNMAPPED);
+    return {
+      changed_paths: changedPaths,
+      touched_components: mapped.touchedComponents,
+      unmapped_paths: mapped.unmappedPaths,
+      impacted_components: allComponents,
+      confidence: "low",
+      warnings,
+    };
+  }
+
+  if (input.model.deps.edges.length === 0 && mapped.touchedComponents.length > 0) {
+    warnings.push(WARNING_MISSING_DEPS);
     return {
       changed_paths: changedPaths,
       touched_components: mapped.touchedComponents,
