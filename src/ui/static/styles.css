@@ -294,6 +294,13 @@ body {
   border-radius: 18px;
   border: 1px solid var(--line);
   overflow: hidden;
+  --map-hypha: rgba(42, 124, 111, 0.35);
+  --map-hypha-strong: rgba(42, 124, 111, 0.75);
+  --map-mushroom-cap: #c97b52;
+  --map-mushroom-stem: #f2e2cd;
+  --map-fairy: rgba(255, 210, 130, 0.9);
+  --map-fairy-sleep: rgba(255, 210, 130, 0.4);
+  --map-legend-bg: rgba(255, 255, 255, 0.88);
   background:
     radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.6), transparent 45%),
     radial-gradient(circle at 80% 16%, rgba(42, 124, 111, 0.2), transparent 44%),
@@ -364,9 +371,71 @@ body {
   font-size: 0.78rem;
 }
 
+.map-legend {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  min-width: 220px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(155, 124, 98, 0.35);
+  background: var(--map-legend-bg);
+  box-shadow: 0 12px 26px rgba(41, 50, 44, 0.12);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.map-legend[hidden] {
+  display: none;
+}
+
+.map-legend-title {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.map-legend-list {
+  display: grid;
+  gap: 8px;
+}
+
+.map-legend-item {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.3;
+}
+
+.map-legend-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.map-legend-hypha {
+  stroke: var(--map-hypha-strong);
+  stroke-linecap: round;
+}
+
+.map-legend-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.map-legend-status {
+  margin-top: 2px;
+  font-size: 0.62rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .map-hypha {
   fill: none;
-  stroke: rgba(42, 124, 111, 0.35);
+  stroke: var(--map-hypha);
   stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -399,6 +468,51 @@ body {
   paint-order: stroke;
   stroke: rgba(245, 239, 227, 0.9);
   stroke-width: 3px;
+}
+
+.map-mushroom-icon .map-mushroom-cap {
+  fill: var(--map-mushroom-cap);
+}
+
+.map-mushroom-icon .map-mushroom-stem {
+  fill: var(--map-mushroom-stem);
+  stroke: rgba(129, 86, 59, 0.4);
+  stroke-width: 0.5;
+}
+
+.map-fairy-orbit {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.map-fairy-orbit.is-animated {
+  animation: map-fairy-orbit 6s linear infinite;
+}
+
+.map-fairy-orbit.is-sleeping .map-fairy {
+  fill: var(--map-fairy-sleep);
+  filter: none;
+}
+
+.map-fairy {
+  fill: var(--map-fairy);
+  filter: drop-shadow(0 0 3px rgba(255, 210, 130, 0.45));
+}
+
+@keyframes map-fairy-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-fairy-orbit.is-animated {
+    animation: none;
+  }
 }
 
 

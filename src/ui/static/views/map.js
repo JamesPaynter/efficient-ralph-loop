@@ -9,8 +9,21 @@ const MAP_LAYOUT = {
   edgeCurveScale: 0.25,
   edgeCurveMin: 22,
   edgeCurveMax: 120,
+  hyphaStrokeMin: 1,
+  hyphaStrokeMax: 6,
+  hyphaStrokeBase: 1,
   knotGlowRadius: 10,
   knotCoreRadius: 4,
+  knotCoreMinRadius: 3,
+  knotCoreMaxRadius: 9,
+  knotGlowMinRadius: 7,
+  knotGlowMaxRadius: 16,
+  mushroomOffsetX: 14,
+  mushroomOffsetY: -12,
+  fairyOrbitOffsetX: -16,
+  fairyOrbitOffsetY: -12,
+  fairyOrbitRadius: 9,
+  fairyCount: 3,
   labelOffset: 18,
 };
 
@@ -36,6 +49,9 @@ export function createMapView({ appState } = {}) {
     },
     stage: null,
     svg: null,
+    legend: null,
+    legendFairyOrbit: null,
+    legendFairyStatus: null,
     message: null,
     messageTitle: null,
     messageCopy: null,
@@ -103,6 +119,8 @@ export function createMapView({ appState } = {}) {
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", "Codebase dependency map");
 
+    const legend = buildLegend();
+
     const message = document.createElement("div");
     message.className = "map-message";
 
@@ -120,7 +138,7 @@ export function createMapView({ appState } = {}) {
 
     messageCard.append(messageTitle, messageCopy, messageDetail);
     message.append(messageCard);
-    stage.append(svg, message);
+    stage.append(svg, legend.wrap, message);
 
     shell.append(header, stage);
     container.append(shell);
@@ -132,6 +150,9 @@ export function createMapView({ appState } = {}) {
     elements.meta.baseSha = baseShaMeta.value;
     elements.stage = stage;
     elements.svg = svg;
+    elements.legend = legend.wrap;
+    elements.legendFairyOrbit = legend.fairyOrbit;
+    elements.legendFairyStatus = legend.fairyStatus;
     elements.message = message;
     elements.messageTitle = messageTitle;
     elements.messageCopy = messageCopy;
@@ -152,6 +173,121 @@ export function createMapView({ appState } = {}) {
 
     wrap.append(labelEl, valueEl);
     return { wrap, value: valueEl };
+  }
+
+  function buildLegend() {
+    const wrap = document.createElement("div");
+    wrap.className = "map-legend";
+    wrap.hidden = true;
+
+    const title = document.createElement("div");
+    title.className = "map-legend-title";
+    title.textContent = "Growth semantics";
+
+    const list = document.createElement("div");
+    list.className = "map-legend-list";
+
+    const hypha = buildLegendItem({
+      label: "Hypha thickness = code footprint",
+      tooltip: "Thickness uses log10(1 + code_loc), clamped.",
+      icon: buildLegendHyphaIcon(),
+    });
+
+    const mushroom = buildLegendItem({
+      label: "Mushroom = unit tests",
+      tooltip: "Shown when unit_test_files > 0.",
+      icon: buildLegendMushroomIcon(),
+    });
+
+    const fairy = buildLegendFairyItem();
+
+    list.append(hypha.wrap, mushroom.wrap, fairy.wrap);
+    wrap.append(title, list);
+
+    return {
+      wrap,
+      fairyOrbit: fairy.orbit,
+      fairyStatus: fairy.status,
+    };
+  }
+
+  function buildLegendItem({ label, tooltip, icon }) {
+    const wrap = document.createElement("div");
+    wrap.className = "map-legend-item";
+    if (tooltip) {
+      wrap.title = tooltip;
+    }
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "map-legend-label";
+    labelEl.textContent = label;
+
+    wrap.append(icon, labelEl);
+
+    return { wrap, label: labelEl };
+  }
+
+  function buildLegendHyphaIcon() {
+    const svg = createLegendSvg("0 0 32 20");
+    const thin = createSvgElement("line", "map-legend-hypha");
+    thin.setAttribute("x1", "4");
+    thin.setAttribute("x2", "28");
+    thin.setAttribute("y1", "6");
+    thin.setAttribute("y2", "6");
+    thin.setAttribute("stroke-width", "1.2");
+
+    const thick = createSvgElement("line", "map-legend-hypha");
+    thick.setAttribute("x1", "4");
+    thick.setAttribute("x2", "28");
+    thick.setAttribute("y1", "14");
+    thick.setAttribute("y2", "14");
+    thick.setAttribute("stroke-width", "4.8");
+
+    svg.append(thin, thick);
+    return svg;
+  }
+
+  function buildLegendMushroomIcon() {
+    const svg = createLegendSvg("-10 -12 20 20");
+    svg.append(createMushroomGroup());
+    return svg;
+  }
+
+  function buildLegendFairyItem() {
+    const svg = createLegendSvg("-10 -10 20 20");
+    const orbit = createFairyOrbit({
+      radius: 5,
+      count: 3,
+      shouldAnimate: false,
+      isSleeping: true,
+    });
+    svg.append(orbit);
+
+    const labelWrap = document.createElement("div");
+    labelWrap.className = "map-legend-label";
+
+    const label = document.createElement("div");
+    label.textContent = "Fairies = integration/e2e tests";
+
+    const status = document.createElement("div");
+    status.className = "map-legend-status";
+    status.textContent = "Integration doctor: unknown";
+
+    labelWrap.append(label, status);
+
+    const wrap = document.createElement("div");
+    wrap.className = "map-legend-item";
+    wrap.title = "Shown when integration_test_files + e2e_test_files > 0.";
+    wrap.append(svg, labelWrap);
+
+    return { wrap, orbit, status };
+  }
+
+  function createLegendSvg(viewBox) {
+    const svg = createSvgElement("svg", "map-legend-icon");
+    svg.setAttribute("viewBox", viewBox);
+    svg.setAttribute("aria-hidden", "true");
+    return svg;
   }
 
   function attachResizeObserver() {
@@ -279,6 +415,7 @@ export function createMapView({ appState } = {}) {
     updateSubtext();
     updateMeta(null);
     clearSvg();
+    setLegendVisibility(false);
     showMessage({
       title: "Map view",
       copy: "Choose a project and run to load the dependency map.",
@@ -288,6 +425,7 @@ export function createMapView({ appState } = {}) {
 
   function renderLoadingState() {
     updateSubtext();
+    setLegendVisibility(false);
     showMessage({
       title: "Loading map",
       copy: "Fetching the control-plane graph snapshot.",
@@ -299,6 +437,7 @@ export function createMapView({ appState } = {}) {
     updateSubtext();
     const baseSha = extractBaseSha(error);
     updateMeta(null);
+    setLegendVisibility(false);
     if (baseSha) {
       setMetaValue(elements.meta.baseSha, baseSha);
     }
@@ -338,9 +477,12 @@ export function createMapView({ appState } = {}) {
 
     const components = Array.isArray(snapshot.components) ? snapshot.components : [];
     const deps = Array.isArray(snapshot.deps) ? snapshot.deps : [];
+    const statsById = normalizeStatsById(snapshot.stats);
+    const integrationDoctorPassed = snapshot.run_quality?.integration_doctor_passed ?? null;
 
     if (!components.length) {
       clearSvg();
+      setLegendVisibility(false);
       showMessage({
         title: "No components found",
         copy: "The control-plane model has no components to visualize.",
@@ -351,10 +493,18 @@ export function createMapView({ appState } = {}) {
 
     hideMessage();
     clearSvg();
-    renderGraphSvg({ components, deps, stageSize });
+    setLegendVisibility(true);
+    updateLegend({ integrationDoctorPassed });
+    renderGraphSvg({
+      components,
+      deps,
+      stageSize,
+      statsById,
+      shouldAnimateFairies: integrationDoctorPassed === true,
+    });
   }
 
-  function renderGraphSvg({ components, deps, stageSize }) {
+  function renderGraphSvg({ components, deps, stageSize, statsById, shouldAnimateFairies }) {
     const width = stageSize.width;
     const height = stageSize.height;
 
@@ -362,12 +512,19 @@ export function createMapView({ appState } = {}) {
     elements.svg.setAttribute("width", String(width));
     elements.svg.setAttribute("height", String(height));
 
-    const graphData = buildGraphLayout(components, deps, stageSize);
+    const graphData = buildGraphLayout({
+      components,
+      deps,
+      stageSize,
+      statsById,
+      shouldAnimateFairies,
+    });
 
     const edgesGroup = createSvgElement("g", "map-edges");
     for (const edge of graphData.edges) {
       const path = createSvgElement("path", "map-hypha");
       path.setAttribute("d", edge.path);
+      path.setAttribute("stroke-width", edge.strokeWidth.toFixed(2));
       edgesGroup.append(path);
     }
 
@@ -381,21 +538,121 @@ export function createMapView({ appState } = {}) {
       tooltip.textContent = node.tooltip;
 
       const glow = createSvgElement("circle", "map-knot-glow");
-      glow.setAttribute("r", String(MAP_LAYOUT.knotGlowRadius));
+      glow.setAttribute("r", String(node.glowRadius));
 
       const core = createSvgElement("circle", "map-knot-core");
-      core.setAttribute("r", String(MAP_LAYOUT.knotCoreRadius));
+      core.setAttribute("r", String(node.coreRadius));
+
+      const nodeElements = [tooltip, glow, core];
+
+      if (node.hasMushroom) {
+        const mushroom = createMushroomGroup({
+          offsetX: MAP_LAYOUT.mushroomOffsetX,
+          offsetY: MAP_LAYOUT.mushroomOffsetY,
+        });
+        nodeElements.push(mushroom);
+      }
+
+      if (node.hasFairies) {
+        const fairies = createFairyOrbit({
+          offsetX: MAP_LAYOUT.fairyOrbitOffsetX,
+          offsetY: MAP_LAYOUT.fairyOrbitOffsetY,
+          radius: MAP_LAYOUT.fairyOrbitRadius,
+          count: MAP_LAYOUT.fairyCount,
+          shouldAnimate: node.shouldAnimateFairies,
+          isSleeping: !node.shouldAnimateFairies,
+        });
+        nodeElements.push(fairies);
+      }
 
       const label = createSvgElement("text", "map-label");
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("y", String(MAP_LAYOUT.labelOffset));
       label.textContent = node.label;
 
-      nodeGroup.append(tooltip, glow, core, label);
+      nodeElements.push(label);
+      nodeGroup.append(...nodeElements);
       nodesGroup.append(nodeGroup);
     }
 
     elements.svg.append(edgesGroup, nodesGroup);
+  }
+
+  function createMushroomGroup({ offsetX = 0, offsetY = 0 } = {}) {
+    const group = createSvgElement("g", "map-mushroom-icon");
+    if (offsetX || offsetY) {
+      group.setAttribute("transform", `translate(${offsetX}, ${offsetY})`);
+    }
+
+    const cap = createSvgElement("circle", "map-mushroom-cap");
+    cap.setAttribute("r", "6");
+    cap.setAttribute("cy", "-3");
+
+    const stem = createSvgElement("rect", "map-mushroom-stem");
+    stem.setAttribute("x", "-2.2");
+    stem.setAttribute("y", "0");
+    stem.setAttribute("width", "4.4");
+    stem.setAttribute("height", "6.8");
+    stem.setAttribute("rx", "1.6");
+
+    group.append(cap, stem);
+    return group;
+  }
+
+  function createFairyOrbit({
+    offsetX = 0,
+    offsetY = 0,
+    radius = MAP_LAYOUT.fairyOrbitRadius,
+    count = MAP_LAYOUT.fairyCount,
+    shouldAnimate = false,
+    isSleeping = false,
+  } = {}) {
+    const orbit = createSvgElement("g", "map-fairy-orbit");
+    orbit.classList.toggle("is-animated", shouldAnimate);
+    orbit.classList.toggle("is-sleeping", isSleeping);
+    if (offsetX || offsetY) {
+      orbit.setAttribute("transform", `translate(${offsetX}, ${offsetY})`);
+    }
+
+    const total = Math.max(1, count);
+    for (let index = 0; index < total; index += 1) {
+      const angle = (Math.PI * 2 * index) / total;
+      const x = roundPosition(Math.cos(angle) * radius);
+      const y = roundPosition(Math.sin(angle) * radius);
+      const fairy = createSvgElement("circle", "map-fairy");
+      fairy.setAttribute("cx", String(x));
+      fairy.setAttribute("cy", String(y));
+      fairy.setAttribute("r", "1.6");
+      orbit.append(fairy);
+    }
+
+    return orbit;
+  }
+
+  function updateLegend({ integrationDoctorPassed }) {
+    if (!elements.legendFairyOrbit || !elements.legendFairyStatus) {
+      return;
+    }
+
+    const shouldAnimate = integrationDoctorPassed === true;
+    const statusLabel =
+      integrationDoctorPassed === true
+        ? "Integration doctor: passed"
+        : integrationDoctorPassed === false
+          ? "Integration doctor: not passed"
+          : "Integration doctor: unknown";
+
+    elements.legendFairyOrbit.classList.toggle("is-animated", shouldAnimate);
+    elements.legendFairyOrbit.classList.toggle("is-sleeping", !shouldAnimate);
+    elements.legendFairyStatus.textContent = statusLabel;
+  }
+
+  function setLegendVisibility(isVisible) {
+    if (!elements.legend) {
+      return;
+    }
+
+    elements.legend.hidden = !isVisible;
   }
 
   function showMessage({ title, copy, detail, detailIsCommand = false }) {
@@ -487,7 +744,7 @@ export function createMapView({ appState } = {}) {
   // LAYOUT
   // =============================================================================
 
-  function buildGraphLayout(components, deps, stageSize) {
+  function buildGraphLayout({ components, deps, stageSize, statsById, shouldAnimateFairies }) {
     const nodesById = new Map();
     for (const component of components) {
       if (!component?.id) {
@@ -500,8 +757,15 @@ export function createMapView({ appState } = {}) {
     const centerId = pickCenterNode(adjacency);
     const ringData = buildRingData(adjacency, centerId);
     const positions = buildNodePositions(ringData, stageSize);
-    const edges = buildEdgePaths(deps, nodesById, positions);
-    const nodes = buildNodeDescriptors(ringData, nodesById, positions, adjacency);
+    const edges = buildEdgePaths(deps, nodesById, positions, statsById);
+    const nodes = buildNodeDescriptors(
+      ringData,
+      nodesById,
+      positions,
+      adjacency,
+      statsById,
+      shouldAnimateFairies,
+    );
 
     return { nodes, edges };
   }
@@ -633,7 +897,7 @@ export function createMapView({ appState } = {}) {
     return positions;
   }
 
-  function buildEdgePaths(deps, nodesById, positions) {
+  function buildEdgePaths(deps, nodesById, positions, statsById) {
     const edges = [];
     const seen = new Set();
 
@@ -656,8 +920,13 @@ export function createMapView({ appState } = {}) {
 
       const start = positions.get(edge.from);
       const end = positions.get(edge.to);
+      const fromStats = getComponentStats(statsById, edge.from);
+      const toStats = getComponentStats(statsById, edge.to);
+      const edgeFootprint =
+        (getCodeFootprint(fromStats) + getCodeFootprint(toStats)) / 2;
+      const strokeWidth = computeHyphaWidth(edgeFootprint);
       const path = buildBezierPath(start, end, edge.from, edge.to);
-      edges.push({ from: edge.from, to: edge.to, path });
+      edges.push({ from: edge.from, to: edge.to, path, strokeWidth });
     }
 
     return edges;
@@ -692,7 +961,14 @@ export function createMapView({ appState } = {}) {
     return `M ${start.x} ${start.y} C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${end.x} ${end.y}`;
   }
 
-  function buildNodeDescriptors(ringData, nodesById, positions, adjacency) {
+  function buildNodeDescriptors(
+    ringData,
+    nodesById,
+    positions,
+    adjacency,
+    statsById,
+    shouldAnimateFairies,
+  ) {
     const nodes = [];
     const depths = Array.from(ringData.ringNodes.keys()).sort((a, b) => a - b);
 
@@ -705,12 +981,23 @@ export function createMapView({ appState } = {}) {
           continue;
         }
 
+        const stats = getComponentStats(statsById, id);
+        const codeFootprint = getCodeFootprint(stats);
+        const { coreRadius, glowRadius } = computeNodeRadii(codeFootprint);
+        const hasMushroom = stats.unit_test_files > 0;
+        const hasFairies = stats.integration_test_files + stats.e2e_test_files > 0;
+
         nodes.push({
           id,
           label: id,
           x: position.x,
           y: position.y,
-          tooltip: buildNodeTooltip(component, adjacency.get(id)),
+          coreRadius,
+          glowRadius,
+          hasMushroom,
+          hasFairies,
+          shouldAnimateFairies,
+          tooltip: buildNodeTooltip(component, adjacency.get(id), stats),
         });
       }
     }
@@ -718,7 +1005,7 @@ export function createMapView({ appState } = {}) {
     return nodes;
   }
 
-  function buildNodeTooltip(component, neighbors) {
+  function buildNodeTooltip(component, neighbors, stats) {
     const lines = [component.id];
     if (component.kind) {
       lines.push(`Kind: ${component.kind}`);
@@ -729,8 +1016,123 @@ export function createMapView({ appState } = {}) {
     if (Array.isArray(component.roots) && component.roots.length) {
       lines.push(`Roots: ${component.roots.join(", ")}`);
     }
+    if (stats) {
+      lines.push(`Code LOC: ${stats.code_loc}`);
+      lines.push(`Code files: ${stats.code_files}`);
+      lines.push(`Unit test files: ${stats.unit_test_files}`);
+      lines.push(`Integration test files: ${stats.integration_test_files}`);
+      lines.push(`E2E test files: ${stats.e2e_test_files}`);
+    }
 
     return lines.join("\n");
+  }
+
+
+  // =============================================================================
+  // SEMANTIC MAPPING
+  // =============================================================================
+
+  function normalizeStatsById(statsById) {
+    const normalized = new Map();
+    if (!statsById || typeof statsById !== "object") {
+      return normalized;
+    }
+
+    for (const [id, stats] of Object.entries(statsById)) {
+      normalized.set(id, normalizeComponentStats(stats));
+    }
+
+    return normalized;
+  }
+
+  function getComponentStats(statsById, componentId) {
+    if (!statsById) {
+      return buildEmptyStats();
+    }
+
+    if (statsById instanceof Map) {
+      return statsById.get(componentId) ?? buildEmptyStats();
+    }
+
+    return normalizeComponentStats(statsById[componentId]);
+  }
+
+  function normalizeComponentStats(stats) {
+    if (!stats || typeof stats !== "object") {
+      return buildEmptyStats();
+    }
+
+    return {
+      code_loc: normalizeCount(stats.code_loc),
+      code_files: normalizeCount(stats.code_files),
+      unit_test_files: normalizeCount(stats.unit_test_files),
+      integration_test_files: normalizeCount(stats.integration_test_files),
+      e2e_test_files: normalizeCount(stats.e2e_test_files),
+    };
+  }
+
+  function buildEmptyStats() {
+    return {
+      code_loc: 0,
+      code_files: 0,
+      unit_test_files: 0,
+      integration_test_files: 0,
+      e2e_test_files: 0,
+    };
+  }
+
+  function normalizeCount(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) {
+      return 0;
+    }
+    return Math.round(number);
+  }
+
+  function getCodeFootprint(stats) {
+    if (!stats) {
+      return 0;
+    }
+
+    if (stats.code_loc > 0) {
+      return stats.code_loc;
+    }
+
+    return stats.code_files;
+  }
+
+  function computeHyphaWidth(codeFootprint) {
+    const weight = computeCodeWeight(codeFootprint);
+    return clampValue(
+      MAP_LAYOUT.hyphaStrokeMin,
+      MAP_LAYOUT.hyphaStrokeMax,
+      MAP_LAYOUT.hyphaStrokeBase + weight,
+    );
+  }
+
+  function computeNodeRadii(codeFootprint) {
+    const weight = computeCodeWeight(codeFootprint);
+    const coreRadius = clampValue(
+      MAP_LAYOUT.knotCoreMinRadius,
+      MAP_LAYOUT.knotCoreMaxRadius,
+      MAP_LAYOUT.knotCoreRadius + weight,
+    );
+    const glowRadius = clampValue(
+      MAP_LAYOUT.knotGlowMinRadius,
+      MAP_LAYOUT.knotGlowMaxRadius,
+      MAP_LAYOUT.knotGlowRadius + weight * 1.6,
+    );
+
+    return { coreRadius, glowRadius };
+  }
+
+  function computeCodeWeight(codeFootprint) {
+    const safeFootprint = Number.isFinite(codeFootprint) ? Math.max(0, codeFootprint) : 0;
+    return Math.log10(1 + safeFootprint);
+  }
+
+  function clampValue(minValue, maxValue, value) {
+    return Math.min(maxValue, Math.max(minValue, value));
   }
 
 
