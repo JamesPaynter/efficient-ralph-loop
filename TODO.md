@@ -29,7 +29,7 @@
 - [ ] [069 - Graph-backed scope compliance: warn → block rollout](.mycelium/tasks/069-graph-backed-scope-compliance-warn-block-rollout/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [070 - Blast radius from diff: touched → impacted components](.mycelium/tasks/070-blast-radius-from-diff-touched-impacted-components/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [071 - Scoped checkset computation (conservative fallback to doctor)](.mycelium/tasks/071-scoped-checkset-computation-conservative-fallback-to-doctor/spec.md) (Effort <L>, Tier <pro>)
-- [ ] [072 - Surface change detection MVP (contracts/config/public entrypoints)](.mycelium/tasks/072-surface-change-detection-mvp-contracts-config-public-entrypoints/spec.md) (Effort <S>, Tier <standard>)
+- [x] [072 - Surface change detection MVP (contracts/config/public entrypoints)](.mycelium/tasks/072-surface-change-detection-mvp-contracts-config-public-entrypoints/spec.md) (Effort <S>, Tier <standard>)
 - [ ] [073 - Surface-aware gates + optional surface locks](.mycelium/tasks/073-surface-aware-gates-optional-surface-locks/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [074 - Autonomy tiers (risk classification that drives enforcement)](.mycelium/tasks/074-autonomy-tiers-risk-classification-that-drives-enforcement/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [075 - Policy transparency: cp policy eval + per-task artifacts](.mycelium/tasks/075-policy-transparency-cp-policy-eval-per-task-artifacts/spec.md) (Effort <S>, Tier <standard>)
