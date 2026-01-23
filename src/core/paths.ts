@@ -166,6 +166,22 @@ export function taskDerivedScopeReportPath(
   );
 }
 
+export function taskBlastReportPath(
+  repoPath: string,
+  runId: string,
+  taskId: string,
+): string {
+  return path.join(
+    repoPath,
+    ".mycelium",
+    "reports",
+    "control-plane",
+    "blast",
+    runId,
+    `${taskId}.json`,
+  );
+}
+
 export function plannerHomeDir(projectName: string): string {
   return path.join(orchestratorHome(), "codex", projectName, "planner");
 }

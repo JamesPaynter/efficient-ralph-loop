@@ -4,6 +4,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { minimatch } from "minimatch";
 
+import { taskBlastReportPath } from "../core/paths.js";
 import { registerControlPlaneFlags, resolveControlPlaneFlags } from "../control-plane/cli/flags.js";
 import type {
   ControlPlaneJsonError,
@@ -129,6 +130,8 @@ export function registerControlPlaneCommand(program: Command): void {
     .option("--changed <paths...>", "Paths to treat as changed")
     .option("--diff <range>", "Git diff rev range (e.g., HEAD~1..HEAD)")
     .option("--against <ref>", "Git ref to diff against HEAD")
+    .option("--run <id>", "Run id for task blast artifact")
+    .option("--task <id>", "Task id for task blast artifact")
     .action(async (targets, opts, command) => {
       await handleBlastQuery(targets as string[], opts as BlastQueryOptions, command);
     });
@@ -424,6 +427,8 @@ type BlastQueryOptions = {
   changed?: string[];
   diff?: string;
   against?: string;
+  run?: string;
+  task?: string;
 };
 
 async function handleBlastQuery(
@@ -433,8 +438,31 @@ async function handleBlastQuery(
 ): Promise<void> {
   const output = resolveOutputOptions(command);
   const flags = resolveControlPlaneFlags(command);
+  const runId = options.run?.trim() ?? "";
+  const taskId = options.task?.trim() ?? "";
+
+  if ((runId && !taskId) || (!runId && taskId)) {
+    emitControlPlaneError(
+      {
+        code: CONTROL_PLANE_ERROR_CODES.modelStoreError,
+        message: "Provide both --run and --task to load a blast report.",
+        details: null,
+      },
+      output,
+    );
+    return;
+  }
 
   try {
+    if (runId && taskId) {
+      const reportPath = taskBlastReportPath(flags.repoPath, runId, taskId);
+      const report = await readBlastReport(reportPath);
+      if (report) {
+        emitControlPlaneResult(report, output);
+        return;
+      }
+    }
+
     const modelResult = await loadControlPlaneModel({
       repoRoot: flags.repoPath,
       baseSha: flags.revision.baseSha,
@@ -449,11 +477,15 @@ async function handleBlastQuery(
 
     const changedInput =
       options.changed && options.changed.length > 0 ? options.changed : targets;
+    const hasExplicitChangeInput =
+      changedInput.length > 0 || Boolean(options.diff) || Boolean(options.against);
+    const defaultAgainst =
+      runId && taskId && !hasExplicitChangeInput ? modelResult.baseSha : null;
     const changedPaths = await listChangedPaths({
       repoRoot: flags.repoPath,
       changed: changedInput,
       diff: options.diff ?? null,
-      against: options.against ?? null,
+      against: options.against ?? defaultAgainst,
     });
 
     const result = computeBlastRadius({
@@ -464,6 +496,23 @@ async function handleBlastQuery(
     emitControlPlaneResult(result, output);
   } catch (error) {
     emitControlPlaneError(resolveModelStoreError(error), output);
+  }
+}
+
+async function readBlastReport(reportPath: string): Promise<unknown | null> {
+  try {
+    const raw = await fs.readFile(reportPath, "utf8");
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw error;
   }
 }
 
