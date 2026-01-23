@@ -2,7 +2,7 @@
 // Purpose: render running tasks as mushrooms and status counts as landmarks.
 // Usage: created by app.js and driven via onSummary callbacks.
 
-export function createGardenView({ appState, actions }) {
+export function createGardenView({ appState, actions, fetchApi }) {
   const container = document.getElementById("view-garden");
 
 
@@ -42,6 +42,9 @@ export function createGardenView({ appState, actions }) {
   const INITIAL_SLOT_COUNT = 12;
   const SPAWN_ANIMATION_MS = 220;
   const DESPAWN_ANIMATION_MS = 240;
+  const EVENTS_POLL_INTERVAL_MS = 2000;
+  const MAX_EVENT_BYTES = 32768;
+  const PULSE_DURATION_MS = 400;
   const slotColumnPositions = buildSlotColumnPositions();
 
   const viewState = {
@@ -60,6 +63,12 @@ export function createGardenView({ appState, actions }) {
     mushroomByTaskId: new Map(),
     spawnTimeouts: new Map(),
     despawnTimeouts: new Map(),
+    pulseTimeouts: new Map(),
+    eventCursorByTaskId: new Map(),
+    lastEventTypeByTaskId: new Map(),
+    lastEventAtByTaskId: new Map(),
+    eventsTimerId: null,
+    isEventsLoading: false,
   };
 
   return {
@@ -67,6 +76,7 @@ export function createGardenView({ appState, actions }) {
     reset,
     onSummary,
     setActive,
+    setPollingPaused,
   };
 
 
@@ -91,22 +101,35 @@ export function createGardenView({ appState, actions }) {
     viewState.latestSummary = null;
     resetSlotAllocator();
     clearPendingMushroomTimers();
+    clearEventTracking();
     clearMushrooms();
+    stopEventsPolling();
     renderEmptyState();
   }
 
   function setActive(isActive) {
     viewState.isActive = isActive;
     if (!isActive) {
+      stopEventsPolling();
       return;
     }
 
+    startEventsPolling();
     if (viewState.latestSummary) {
       renderGarden(viewState.latestSummary);
       return;
     }
 
     renderEmptyState();
+  }
+
+  function setPollingPaused() {
+    if (appState.pollingPaused) {
+      stopEventsPolling();
+      return;
+    }
+
+    startEventsPolling();
   }
 
 
@@ -126,6 +149,7 @@ export function createGardenView({ appState, actions }) {
     }
 
     renderGarden(summary);
+    startEventsPolling();
   }
 
 
@@ -163,6 +187,7 @@ export function createGardenView({ appState, actions }) {
     updateEmptyState(emptyTitle, emptyCopy, runningTasks.length === 0);
     syncSlotAssignments(runningTasks);
     syncMushrooms(runningTasks);
+    syncRunningTaskEventTracking(runningTasks);
   }
 
 
@@ -388,12 +413,14 @@ export function createGardenView({ appState, actions }) {
         cancelDespawn(taskId, mushroom);
         applySlotPosition(mushroom, slotIndex);
         updateMushroomSelection(mushroom, taskId);
+        updateMushroomActivity(mushroom, taskId);
         continue;
       }
 
       const newMushroom = createMushroom(task, slotIndex);
       viewState.mushroomByTaskId.set(taskId, newMushroom);
       viewState.bed.appendChild(newMushroom);
+      updateMushroomActivity(newMushroom, taskId);
       triggerSpawn(taskId, newMushroom);
     }
   }
@@ -424,20 +451,20 @@ export function createGardenView({ appState, actions }) {
     const cap = document.createElement("div");
     cap.className = "mushroom-cap";
 
+    const ribbon = document.createElement("div");
+    ribbon.className = "mushroom-ribbon";
+    ribbon.textContent = "WORKING";
+
     const stem = document.createElement("div");
     stem.className = "mushroom-stem";
 
-    body.append(cap, stem);
+    body.append(cap, ribbon, stem);
 
     const label = document.createElement("div");
     label.className = "mushroom-label";
     label.textContent = taskId;
 
-    const status = document.createElement("div");
-    status.className = "mushroom-status";
-    status.textContent = "WORKING...";
-
-    float.append(body, label, status);
+    float.append(body, label);
     mushroom.appendChild(float);
 
     return mushroom;
@@ -469,6 +496,7 @@ export function createGardenView({ appState, actions }) {
     }
 
     clearSpawnTimeout(taskId);
+    clearPulseTimeout(taskId, mushroom);
     mushroom.classList.remove("spawn");
     mushroom.classList.add("despawn");
     mushroom.setAttribute("aria-hidden", "true");
@@ -537,8 +565,168 @@ export function createGardenView({ appState, actions }) {
       window.clearTimeout(timeoutId);
     }
 
+    for (const timeoutId of viewState.pulseTimeouts.values()) {
+      window.clearTimeout(timeoutId);
+    }
+
     viewState.spawnTimeouts.clear();
     viewState.despawnTimeouts.clear();
+    viewState.pulseTimeouts.clear();
+  }
+
+  function updateMushroomActivity(mushroom, taskId) {
+    const ribbon = mushroom.querySelector(".mushroom-ribbon");
+    if (!ribbon) {
+      return;
+    }
+
+    const eventType = viewState.lastEventTypeByTaskId.get(taskId);
+    const activityLabel = classifyActivityLabel(eventType);
+    ribbon.textContent = activityLabel;
+    mushroom.title = `Task ${taskId} is running • ${activityLabel}`;
+  }
+
+  function triggerPulse(taskId, mushroom) {
+    clearPulseTimeout(taskId, mushroom);
+    mushroom.classList.remove("pulse");
+    void mushroom.offsetWidth;
+    mushroom.classList.add("pulse");
+
+    const timeoutId = window.setTimeout(() => {
+      mushroom.classList.remove("pulse");
+      viewState.pulseTimeouts.delete(taskId);
+    }, PULSE_DURATION_MS);
+
+    viewState.pulseTimeouts.set(taskId, timeoutId);
+  }
+
+  function clearPulseTimeout(taskId, mushroom) {
+    const timeoutId = viewState.pulseTimeouts.get(taskId);
+    if (!timeoutId) {
+      if (mushroom) {
+        mushroom.classList.remove("pulse");
+      }
+      return;
+    }
+
+    window.clearTimeout(timeoutId);
+    viewState.pulseTimeouts.delete(taskId);
+    if (mushroom) {
+      mushroom.classList.remove("pulse");
+    }
+  }
+
+
+  // =============================================================================
+  // EVENTS POLLING
+  // =============================================================================
+
+  function startEventsPolling() {
+    if (viewState.eventsTimerId !== null) {
+      return;
+    }
+    if (!viewState.isActive) {
+      return;
+    }
+    if (appState.pollingPaused) {
+      return;
+    }
+    if (!hasTarget()) {
+      return;
+    }
+    if (typeof fetchApi !== "function") {
+      return;
+    }
+
+    void fetchRunningTaskEvents();
+    viewState.eventsTimerId = window.setInterval(() => {
+      void fetchRunningTaskEvents();
+    }, EVENTS_POLL_INTERVAL_MS);
+  }
+
+  function stopEventsPolling() {
+    if (viewState.eventsTimerId === null) {
+      return;
+    }
+
+    window.clearInterval(viewState.eventsTimerId);
+    viewState.eventsTimerId = null;
+  }
+
+  async function fetchRunningTaskEvents() {
+    if (viewState.isEventsLoading) {
+      return;
+    }
+    if (!viewState.latestSummary) {
+      return;
+    }
+
+    const runningTasks = getRunningTasks(viewState.latestSummary);
+    if (runningTasks.length === 0) {
+      return;
+    }
+
+    viewState.isEventsLoading = true;
+    try {
+      const requests = runningTasks.map((task) => fetchTaskEventsForTask(String(task.id)));
+      await Promise.allSettled(requests);
+    } finally {
+      viewState.isEventsLoading = false;
+    }
+  }
+
+  async function fetchTaskEventsForTask(taskId) {
+    const cursor = viewState.eventCursorByTaskId.get(taskId) ?? 0;
+    const result = await fetchApi(buildTaskEventsUrl(taskId, cursor));
+    const nextCursor = result.nextCursor ?? cursor;
+    viewState.eventCursorByTaskId.set(taskId, nextCursor);
+
+    if (!Array.isArray(result.lines) || result.lines.length === 0) {
+      return;
+    }
+
+    const parsedEvents = result.lines.map(parseEventLine);
+    const lastEvent = parsedEvents[parsedEvents.length - 1] ?? null;
+    if (!lastEvent) {
+      return;
+    }
+
+    viewState.lastEventTypeByTaskId.set(taskId, lastEvent.type);
+    const lastEventAt = resolveEventTimestamp(parsedEvents);
+    if (lastEventAt !== null) {
+      viewState.lastEventAtByTaskId.set(taskId, lastEventAt);
+    }
+
+    const mushroom = viewState.mushroomByTaskId.get(taskId);
+    if (!mushroom) {
+      return;
+    }
+
+    updateMushroomActivity(mushroom, taskId);
+    triggerPulse(taskId, mushroom);
+  }
+
+  function syncRunningTaskEventTracking(runningTasks) {
+    const runningTaskIds = new Set(runningTasks.map((task) => String(task.id)));
+    const trackedTaskIds = new Set(viewState.eventCursorByTaskId.keys());
+
+    for (const taskId of trackedTaskIds) {
+      if (runningTaskIds.has(taskId)) {
+        continue;
+      }
+
+      viewState.eventCursorByTaskId.delete(taskId);
+      viewState.lastEventTypeByTaskId.delete(taskId);
+      viewState.lastEventAtByTaskId.delete(taskId);
+      const mushroom = viewState.mushroomByTaskId.get(taskId);
+      clearPulseTimeout(taskId, mushroom);
+    }
+  }
+
+  function clearEventTracking() {
+    viewState.eventCursorByTaskId.clear();
+    viewState.lastEventTypeByTaskId.clear();
+    viewState.lastEventAtByTaskId.clear();
   }
 
 
@@ -575,5 +763,101 @@ export function createGardenView({ appState, actions }) {
       const isSelected = button.dataset.taskId === normalizedTaskId;
       button.classList.toggle("is-selected", isSelected);
     }
+  }
+
+  function hasTarget() {
+    return Boolean(appState.projectName && appState.runId);
+  }
+
+  function buildTaskEventsUrl(taskId, cursor) {
+    const params = new URLSearchParams();
+    params.set("cursor", String(cursor));
+    params.set("maxBytes", String(MAX_EVENT_BYTES));
+
+    const query = params.toString();
+    return `/api/projects/${encodeURIComponent(appState.projectName)}/runs/${encodeURIComponent(
+      appState.runId,
+    )}/tasks/${encodeURIComponent(taskId)}/events?${query}`;
+  }
+
+  function parseEventLine(line) {
+    if (!line) {
+      return { type: "raw", ts: null };
+    }
+
+    try {
+      const parsed = JSON.parse(line);
+      return {
+        type: parsed.type ?? "unknown",
+        ts: parsed.ts ?? null,
+      };
+    } catch (error) {
+      return {
+        type: "raw",
+        ts: null,
+      };
+    }
+  }
+
+  function resolveEventTimestamp(parsedEvents) {
+    for (let index = parsedEvents.length - 1; index >= 0; index -= 1) {
+      const candidate = parsedEvents[index];
+      const parsed = parseTimestamp(candidate?.ts);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+
+    return Date.now();
+  }
+
+  function parseTimestamp(value) {
+    if (!value) {
+      return null;
+    }
+
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  function classifyActivityLabel(eventType) {
+    const normalized = eventType ? String(eventType).toLowerCase() : "";
+    if (!normalized) {
+      return "WORKING";
+    }
+
+    if (matchesTypePrefix(normalized, "bootstrap")) {
+      return "BOOTSTRAP";
+    }
+    if (matchesTypePrefix(normalized, "doctor")) {
+      return "DOCTOR";
+    }
+    if (matchesTypePrefix(normalized, "git")) {
+      return "GIT";
+    }
+    if (matchesTypePrefix(normalized, "validator") || matchesTypePrefix(normalized, "test")) {
+      return "TESTING";
+    }
+    if (
+      matchesTypePrefix(normalized, "codex") ||
+      matchesTypePrefix(normalized, "llm") ||
+      matchesTypePrefix(normalized, "agent")
+    ) {
+      return "THINKING";
+    }
+
+    return "WORKING";
+  }
+
+  function matchesTypePrefix(eventType, prefix) {
+    return eventType === prefix || eventType.startsWith(`${prefix}.`);
   }
 }
