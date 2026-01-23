@@ -3,6 +3,7 @@
 // Assumes component IDs are normalized (no resource prefix).
 
 import type { ControlPlaneDependencyEdge, ControlPlaneModel } from "../model/schema.js";
+import type { SurfaceChangeCategory } from "./types.js";
 
 export type ChecksetMode = "off" | "report" | "enforce";
 
@@ -42,6 +43,7 @@ export type ChecksetDecisionInput = {
   maxComponentsForScoped: number;
   fallbackCommand: string;
   surfaceChange?: boolean;
+  surfaceChangeCategories?: SurfaceChangeCategory[];
 };
 
 
@@ -105,6 +107,7 @@ export function computeChecksetDecision(input: ChecksetDecisionInput): ChecksetD
   }
 
   if (input.surfaceChange) {
+    rationale.push(buildSurfaceChangeSummary(input.surfaceChangeCategories));
     return buildFallbackDecision({
       fallbackCommand: input.fallbackCommand,
       requiredComponents,
@@ -270,6 +273,27 @@ function normalizeCommandMapping(
       .map(([componentId, command]) => [componentId.trim(), command.trim()] as const)
       .filter(([componentId, command]) => componentId.length > 0 && command.length > 0),
   );
+}
+
+function buildSurfaceChangeSummary(categories?: SurfaceChangeCategory[]): string {
+  const normalized = normalizeSurfaceCategories(categories);
+  if (normalized.length === 0) {
+    return "surface_change:unknown";
+  }
+
+  return `surface_change:${normalized.join(",")}`;
+}
+
+function normalizeSurfaceCategories(categories?: SurfaceChangeCategory[]): string[] {
+  if (!categories || categories.length === 0) {
+    return [];
+  }
+
+  const normalized = categories.map((category) => category.trim()).filter((category) => {
+    return category.length > 0;
+  });
+
+  return Array.from(new Set(normalized)).sort();
 }
 
 function buildScopedCommands(input: {
