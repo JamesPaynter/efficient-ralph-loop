@@ -60,3 +60,8 @@ or
 
 - All commands return exit code `1` with a structured error until implemented.
 - `--help` paths exit `0` and print standard help output.
+
+## Run pinning (Phase B)
+
+- Runs persist `control_plane.base_sha` (plus model metadata when available) at start.
+- Resume reuses the stored snapshot so base SHA and model hash stay fixed mid-run.
