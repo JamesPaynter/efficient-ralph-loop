@@ -2,8 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { readJsonlFromCursor, taskEventsLogPathForId } from "../core/log-query.js";
+import { findTaskLogDir, readJsonlFromCursor, taskEventsLogPathForId } from "../core/log-query.js";
 import { resolveRunLogsDir } from "../core/paths.js";
+import { readDoctorLogSnippet } from "../core/run-logs.js";
 import { loadRunStateForProject, summarizeRunState } from "../core/state-store.js";
 
 
@@ -25,6 +26,9 @@ type ApiRouteMatch =
   | { type: "summary"; projectName: string; runId: string }
   | { type: "orchestrator_events"; projectName: string; runId: string }
   | { type: "task_events"; projectName: string; runId: string; taskId: string }
+  | { type: "task_doctor"; projectName: string; runId: string; taskId: string }
+  | { type: "task_compliance"; projectName: string; runId: string; taskId: string }
+  | { type: "validator_report"; projectName: string; runId: string; validator: string; taskId: string }
   | { type: "bad_request" }
   | { type: "not_found" };
 
@@ -35,6 +39,10 @@ type StaticFile = {
 };
 
 type OptionalNumberParseResult = { ok: true; value: number | null } | { ok: false };
+
+type JsonFileReadResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "not_found" | "too_large" };
 
 
 // =============================================================================
@@ -140,6 +148,21 @@ async function handleApiRequest(
 
   if (route.type === "task_events") {
     await handleTaskEventsRequest(res, method, url, route);
+    return;
+  }
+
+  if (route.type === "task_doctor") {
+    await handleDoctorRequest(res, method, url, route);
+    return;
+  }
+
+  if (route.type === "task_compliance") {
+    await handleComplianceRequest(res, method, route);
+    return;
+  }
+
+  if (route.type === "validator_report") {
+    await handleValidatorReportRequest(res, method, route);
     return;
   }
 
@@ -320,6 +343,145 @@ async function handleTaskEventsRequest(
   );
 }
 
+async function handleDoctorRequest(
+  res: ServerResponse,
+  method: string,
+  url: URL,
+  route: { projectName: string; runId: string; taskId: string },
+): Promise<void> {
+  const attemptResult = parseOptionalPositiveInteger(url.searchParams.get("attempt"));
+  if (!attemptResult.ok) {
+    sendApiError(res, 400, "bad_request", "Invalid attempt value.", method === "HEAD");
+    return;
+  }
+
+  const limitResult = parseOptionalPositiveInteger(url.searchParams.get("limit"));
+  if (!limitResult.ok) {
+    sendApiError(res, 400, "bad_request", "Invalid limit value.", method === "HEAD");
+    return;
+  }
+
+  const requestedLimit = limitResult.value ?? DEFAULT_DOCTOR_SNIPPET_LIMIT;
+  if (requestedLimit > MAX_DOCTOR_SNIPPET_LIMIT) {
+    sendApiError(
+      res,
+      400,
+      "bad_request",
+      `Limit exceeds maximum of ${MAX_DOCTOR_SNIPPET_LIMIT} characters.`,
+      method === "HEAD",
+    );
+    return;
+  }
+
+  const resolved = resolveRunLogsDir(route.projectName, route.runId);
+  if (!resolved) {
+    sendApiError(res, 404, "not_found", "Run logs not found.", method === "HEAD");
+    return;
+  }
+
+  const snippet = readDoctorLogSnippet(resolved.dir, route.taskId, attemptResult.value, requestedLimit);
+  if (!snippet) {
+    sendApiError(res, 404, "not_found", "Doctor logs not found.", method === "HEAD");
+    return;
+  }
+
+  sendApiOk(
+    res,
+    {
+      file: normalizeLogPath(resolved.dir, snippet.path),
+      content: snippet.content,
+    },
+    method === "HEAD",
+  );
+}
+
+async function handleComplianceRequest(
+  res: ServerResponse,
+  method: string,
+  route: { projectName: string; runId: string; taskId: string },
+): Promise<void> {
+  const resolved = resolveRunLogsDir(route.projectName, route.runId);
+  if (!resolved) {
+    sendApiError(res, 404, "not_found", "Run logs not found.", method === "HEAD");
+    return;
+  }
+
+  const taskLogDir = findTaskLogDir(resolved.dir, route.taskId);
+  if (!taskLogDir) {
+    sendApiError(res, 404, "not_found", "Compliance report not found.", method === "HEAD");
+    return;
+  }
+
+  const compliancePath = path.join(taskLogDir, "compliance.json");
+  const report = await readJsonFileWithLimit(compliancePath, MAX_JSON_REPORT_BYTES);
+  if (!report.ok) {
+    if (report.reason === "too_large") {
+      sendApiError(
+        res,
+        413,
+        "bad_request",
+        "Compliance report exceeds size limit.",
+        method === "HEAD",
+      );
+      return;
+    }
+    sendApiError(res, 404, "not_found", "Compliance report not found.", method === "HEAD");
+    return;
+  }
+
+  sendApiOk(
+    res,
+    {
+      file: normalizeLogPath(resolved.dir, compliancePath),
+      report: report.value,
+    },
+    method === "HEAD",
+  );
+}
+
+async function handleValidatorReportRequest(
+  res: ServerResponse,
+  method: string,
+  route: { projectName: string; runId: string; validator: string; taskId: string },
+): Promise<void> {
+  const resolved = resolveRunLogsDir(route.projectName, route.runId);
+  if (!resolved) {
+    sendApiError(res, 404, "not_found", "Run logs not found.", method === "HEAD");
+    return;
+  }
+
+  const reportPath = await findValidatorReportPath(resolved.dir, route.validator, route.taskId);
+  if (!reportPath) {
+    sendApiError(res, 404, "not_found", "Validator report not found.", method === "HEAD");
+    return;
+  }
+
+  const report = await readJsonFileWithLimit(reportPath, MAX_JSON_REPORT_BYTES);
+  if (!report.ok) {
+    if (report.reason === "too_large") {
+      sendApiError(
+        res,
+        413,
+        "bad_request",
+        "Validator report exceeds size limit.",
+        method === "HEAD",
+      );
+      return;
+    }
+    sendApiError(res, 404, "not_found", "Validator report not found.", method === "HEAD");
+    return;
+  }
+
+  sendApiOk(
+    res,
+    {
+      file: normalizeLogPath(resolved.dir, reportPath),
+      report: report.value,
+    },
+    method === "HEAD",
+  );
+}
+
 function matchApiRoute(pathname: string): ApiRouteMatch {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 6) {
@@ -357,14 +519,8 @@ function matchApiRoute(pathname: string): ApiRouteMatch {
   }
 
   if (segments.length === 8) {
-    const [api, projects, projectSegment, runs, runSegment, tasks, taskSegment, events] = segments;
-    if (
-      api !== "api" ||
-      projects !== "projects" ||
-      runs !== "runs" ||
-      tasks !== "tasks" ||
-      events !== "events"
-    ) {
+    const [api, projects, projectSegment, runs, runSegment, tasks, taskSegment, tail] = segments;
+    if (api !== "api" || projects !== "projects" || runs !== "runs" || tasks !== "tasks") {
       return { type: "not_found" };
     }
 
@@ -378,7 +534,61 @@ function matchApiRoute(pathname: string): ApiRouteMatch {
       return { type: "bad_request" };
     }
 
-    return { type: "task_events", ...parsed, taskId };
+    if (tail === "events") {
+      return { type: "task_events", ...parsed, taskId };
+    }
+
+    if (tail === "doctor") {
+      return { type: "task_doctor", ...parsed, taskId };
+    }
+
+    if (tail === "compliance") {
+      return { type: "task_compliance", ...parsed, taskId };
+    }
+
+    return { type: "not_found" };
+  }
+
+  if (segments.length === 10) {
+    const [
+      api,
+      projects,
+      projectSegment,
+      runs,
+      runSegment,
+      validators,
+      validatorSegment,
+      tasks,
+      taskSegment,
+      report,
+    ] = segments;
+    if (
+      api !== "api" ||
+      projects !== "projects" ||
+      runs !== "runs" ||
+      validators !== "validators" ||
+      tasks !== "tasks" ||
+      report !== "report"
+    ) {
+      return { type: "not_found" };
+    }
+
+    const parsed = parseProjectRunSegments(projectSegment, runSegment);
+    if (!parsed) {
+      return { type: "bad_request" };
+    }
+
+    const validator = safeDecodeSegment(validatorSegment);
+    if (!validator) {
+      return { type: "bad_request" };
+    }
+
+    const taskId = safeDecodeSegment(taskSegment);
+    if (!taskId) {
+      return { type: "bad_request" };
+    }
+
+    return { type: "validator_report", ...parsed, validator, taskId };
   }
 
   return { type: "not_found" };
@@ -547,6 +757,10 @@ function sendJson(res: ServerResponse, status: number, payload: unknown, isHead:
 // UTILITIES
 // =============================================================================
 
+const DEFAULT_DOCTOR_SNIPPET_LIMIT = 6000;
+const MAX_DOCTOR_SNIPPET_LIMIT = 20000;
+const MAX_JSON_REPORT_BYTES = 1024 * 1024;
+
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -632,6 +846,19 @@ function parseOptionalNonNegativeInteger(value: string | null): OptionalNumberPa
   return { ok: true, value: parsed };
 }
 
+function parseOptionalPositiveInteger(value: string | null): OptionalNumberParseResult {
+  const parsed = parseOptionalNonNegativeInteger(value);
+  if (!parsed.ok) {
+    return { ok: false };
+  }
+
+  if (parsed.value === null) {
+    return parsed;
+  }
+
+  return parsed.value > 0 ? parsed : { ok: false };
+}
+
 function parseCursorParam(value: string | null): { ok: true; value: number } | { ok: false } {
   const parsed = parseOptionalNonNegativeInteger(value);
   if (!parsed.ok) {
@@ -654,6 +881,68 @@ async function fileExists(filePath: string): Promise<boolean> {
     if (isMissingFile(err)) return false;
     throw err;
   }
+}
+
+async function readJsonFileWithLimit(
+  filePath: string,
+  maxBytes: number,
+): Promise<JsonFileReadResult> {
+  const stat = await fs.stat(filePath).catch((err) => {
+    if (isMissingFile(err)) return null;
+    throw err;
+  });
+
+  if (!stat || !stat.isFile()) {
+    return { ok: false, reason: "not_found" };
+  }
+
+  if (stat.size > maxBytes) {
+    return { ok: false, reason: "too_large" };
+  }
+
+  const raw = await fs.readFile(filePath, "utf8");
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: true, value: raw };
+  }
+}
+
+async function findValidatorReportPath(
+  runLogsDir: string,
+  validator: string,
+  taskId: string,
+): Promise<string | null> {
+  const validatorDir = path.join(runLogsDir, "validators", validator);
+  const entries = await fs.readdir(validatorDir, { withFileTypes: true }).catch((err) => {
+    if (isMissingFile(err)) return null;
+    throw err;
+  });
+
+  if (!entries) {
+    return null;
+  }
+
+  let latest: { path: string; mtimeMs: number } | null = null;
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith(`${taskId}-`)) continue;
+    if (!entry.name.toLowerCase().endsWith(".json")) continue;
+
+    const fullPath = path.join(validatorDir, entry.name);
+    const stat = await fs.stat(fullPath).catch((err) => {
+      if (isMissingFile(err)) return null;
+      throw err;
+    });
+
+    if (!stat || !stat.isFile()) continue;
+    if (!latest || stat.mtimeMs > latest.mtimeMs) {
+      latest = { path: fullPath, mtimeMs: stat.mtimeMs };
+    }
+  }
+
+  return latest ? latest.path : null;
 }
 
 function sendText(res: ServerResponse, status: number, message: string, isHead: boolean): void {
