@@ -19,3 +19,42 @@ export type SurfaceChangeDetection = {
 export type SurfacePatternConfig = Partial<Record<SurfaceChangeCategory, string[]>>;
 
 export type SurfacePatternSet = Record<SurfaceChangeCategory, string[]>;
+
+
+// =============================================================================
+// AUTONOMY TIERS
+// =============================================================================
+
+export type AutonomyTier = 0 | 1 | 2 | 3;
+
+export type PolicyBlastConfidence = "high" | "medium" | "low";
+
+export type PolicyBlastRadius = {
+  touched: number;
+  impacted: number;
+  confidence: PolicyBlastConfidence;
+};
+
+export type PolicyCheckMode = "off" | "report" | "enforce";
+
+export type PolicyCheckSelection = {
+  mode: PolicyCheckMode;
+  selected_command: string;
+  rationale: string[];
+};
+
+export type PolicyLocks = {
+  reads: string[];
+  writes: string[];
+};
+
+export type PolicyDecision = {
+  tier: AutonomyTier;
+  surface_change: boolean;
+  blast_radius: PolicyBlastRadius;
+  checks: PolicyCheckSelection;
+  locks: {
+    declared: PolicyLocks;
+    derived?: PolicyLocks;
+  };
+};

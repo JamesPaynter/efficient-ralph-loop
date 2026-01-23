@@ -13,7 +13,8 @@ export type ChecksetFallbackReason =
   | "surface_change"
   | "no_components"
   | "too_many_components"
-  | "missing_command_mapping";
+  | "missing_command_mapping"
+  | "tier_high_risk";
 
 export type ChecksetWideningReason =
   | "missing_dependency_graph"
@@ -44,6 +45,10 @@ export type ChecksetDecisionInput = {
   fallbackCommand: string;
   surfaceChange?: boolean;
   surfaceChangeCategories?: SurfaceChangeCategory[];
+  forceFallback?: {
+    reason: ChecksetFallbackReason;
+    rationale?: string[];
+  };
 };
 
 
@@ -116,6 +121,19 @@ export function computeChecksetDecision(input: ChecksetDecisionInput): ChecksetD
         reason: "surface_change",
       });
     }
+  }
+
+  if (input.forceFallback) {
+    if (input.forceFallback.rationale && input.forceFallback.rationale.length > 0) {
+      rationale.push(...input.forceFallback.rationale);
+    }
+
+    return buildFallbackDecision({
+      fallbackCommand: input.fallbackCommand,
+      requiredComponents,
+      rationale,
+      reason: input.forceFallback.reason,
+    });
   }
 
   if (requiredComponents.length === 0) {
