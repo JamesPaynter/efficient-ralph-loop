@@ -17,6 +17,17 @@ const ResourceSchema = z
   })
   .strict();
 
+const ControlPlaneResourcesModeSchema = z.enum(["prefer-derived"]);
+
+const ControlPlaneSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    component_resource_prefix: z.string().min(1).default("component:"),
+    fallback_resource: z.string().min(1).default("repo-root"),
+    resources_mode: ControlPlaneResourcesModeSchema.default("prefer-derived"),
+  })
+  .strict();
+
 const PlannerSchema = z
   .object({
     provider: LlmProviderSchema.default("codex"),
@@ -119,6 +130,7 @@ export const ProjectConfigSchema = z
     test_paths: z.array(z.string()).default(DEFAULT_TEST_PATHS),
 
     resources: z.array(ResourceSchema).min(1),
+    control_plane: ControlPlaneSchema.default({}),
 
     docker: DockerSchema.default({}),
     manifest_enforcement: ManifestEnforcementSchema.default("warn"),
@@ -142,6 +154,8 @@ export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
 export type LogSummaryConfig = z.infer<typeof LogSummariesSchema>;
 export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
 export type ResourceConfig = z.infer<typeof ResourceSchema>;
+export type ControlPlaneConfig = z.infer<typeof ControlPlaneSchema>;
+export type ControlPlaneResourcesMode = z.infer<typeof ControlPlaneResourcesModeSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
 export type DockerNetworkMode = z.infer<typeof DockerNetworkModeSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
