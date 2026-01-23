@@ -27,6 +27,7 @@ import type {
   ControlPlaneLockMode,
   ControlPlaneResourcesMode,
   ControlPlaneScopeMode,
+  ControlPlaneSurfacePatternsConfig,
   DoctorValidatorConfig,
   ManifestEnforcementPolicy,
   ProjectConfig,
@@ -119,6 +120,14 @@ import {
   buildBlastRadiusReport,
   type ControlPlaneBlastRadiusReport,
 } from "../control-plane/integration/blast-radius.js";
+import {
+  detectSurfaceChanges,
+  resolveSurfacePatterns,
+} from "../control-plane/policy/surface-detect.js";
+import type {
+  SurfaceChangeDetection,
+  SurfacePatternSet,
+} from "../control-plane/policy/types.js";
 import {
   computeChecksetDecision,
   computeChecksetImpactFromGraph,
@@ -286,11 +295,14 @@ type ControlPlaneRunConfig = {
   scopeMode: ControlPlaneScopeMode;
   lockMode: ControlPlaneLockMode;
   checks: ControlPlaneChecksRunConfig;
+  surfacePatterns: SurfacePatternSet;
 };
 
 function resolveControlPlaneConfig(config: ProjectConfig): ControlPlaneRunConfig {
   const raw = (config.control_plane ?? {}) as Partial<ProjectConfig["control_plane"]>;
   const rawChecks = (raw.checks ?? {}) as Partial<ProjectConfig["control_plane"]["checks"]>;
+  const rawSurfacePatterns =
+    (raw.surface_patterns ?? {}) as ControlPlaneSurfacePatternsConfig;
   return {
     enabled: raw.enabled === true,
     componentResourcePrefix: raw.component_resource_prefix ?? "component:",
@@ -304,6 +316,7 @@ function resolveControlPlaneConfig(config: ProjectConfig): ControlPlaneRunConfig
       maxComponentsForScoped: rawChecks.max_components_for_scoped ?? 3,
       fallbackCommand: rawChecks.fallback_command,
     },
+    surfacePatterns: resolveSurfacePatterns(rawSurfacePatterns),
   };
 }
 
@@ -643,7 +656,21 @@ type ChecksetReport = {
   fallback_reason?: ChecksetDecision["fallback_reason"];
   confidence: ChecksetDecision["confidence"];
   rationale: ChecksetDecision["rationale"];
+  surface_change: SurfaceChangeDetection;
 };
+
+async function detectSurfaceChangesForRepo(input: {
+  repoPath: string;
+  baseSha: string;
+  surfacePatterns: SurfacePatternSet;
+}): Promise<SurfaceChangeDetection> {
+  if (!input.baseSha.trim()) {
+    return detectSurfaceChanges([], input.surfacePatterns);
+  }
+
+  const changedFiles = await listChangedFiles(input.repoPath, input.baseSha);
+  return detectSurfaceChanges(changedFiles, input.surfacePatterns);
+}
 
 function resolveTaskTouchedComponents(input: {
   task: TaskSpec;
@@ -686,6 +713,7 @@ function extractComponentIdsFromResources(resources: string[], prefix: string): 
 function buildChecksetReport(input: {
   task: TaskSpec;
   decision: ChecksetDecision;
+  surfaceDetection: SurfaceChangeDetection;
 }): ChecksetReport {
   return {
     task_id: input.task.manifest.id,
@@ -695,6 +723,7 @@ function buildChecksetReport(input: {
     fallback_reason: input.decision.fallback_reason,
     confidence: input.decision.confidence,
     rationale: input.decision.rationale,
+    surface_change: input.surfaceDetection,
   };
 }
 
@@ -705,6 +734,7 @@ function computeTaskCheckset(input: {
   blastContext: BlastRadiusContext | null;
   checksConfig: ControlPlaneChecksRunConfig;
   defaultDoctorCommand: string;
+  surfaceDetection: SurfaceChangeDetection;
 }): { decision: ChecksetDecision; report: ChecksetReport } {
   const touchedComponents = resolveTaskTouchedComponents({
     task: input.task,
@@ -729,11 +759,15 @@ function computeTaskCheckset(input: {
     commandsByComponent: input.checksConfig.commandsByComponent,
     maxComponentsForScoped: input.checksConfig.maxComponentsForScoped,
     fallbackCommand,
-    // Placeholder: surface change signals are wired in 072.
-    surfaceChange: false,
+    surfaceChange: input.surfaceDetection.is_surface_change,
+    surfaceChangeCategories: input.surfaceDetection.categories,
   });
 
-  const report = buildChecksetReport({ task: input.task, decision });
+  const report = buildChecksetReport({
+    task: input.task,
+    decision,
+    surfaceDetection: input.surfaceDetection,
+  });
   return { decision, report };
 }
 
@@ -2143,6 +2177,15 @@ export async function runProject(
       lock_mode: lockMode,
     });
 
+    const surfaceDetection =
+      checksetMode === "off"
+        ? detectSurfaceChanges([])
+        : await detectSurfaceChangesForRepo({
+            repoPath,
+            baseSha: controlPlaneSnapshot?.base_sha ?? config.main_branch,
+            surfacePatterns: controlPlaneConfig.surfacePatterns,
+          });
+
     if (opts.dryRun) {
       logOrchestratorEvent(orchLog, "batch.dry_run", { batch_id: batchId, tasks: batchTaskIds });
       // Mark all as skipped for dry-run
@@ -2178,6 +2221,7 @@ export async function runProject(
                 blastContext,
                 checksConfig: controlPlaneConfig.checks,
                 defaultDoctorCommand,
+                surfaceDetection,
               });
 
         if (checksetResult) {

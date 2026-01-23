@@ -46,4 +46,19 @@ describe("control-plane checkset policy", () => {
     expect(decision.fallback_reason).toBe("missing_command_mapping");
     expect(decision.required_components).toEqual(["component-a", "component-b"]);
   });
+
+  it("falls back when a surface change is detected", () => {
+    const decision = computeChecksetDecision({
+      touchedComponents: ["component-a"],
+      impactedComponents: ["component-a"],
+      commandsByComponent: { "component-a": "npm run test:component-a" },
+      maxComponentsForScoped: 3,
+      fallbackCommand: "npm test",
+      surfaceChange: true,
+    });
+
+    expect(decision.is_fallback).toBe(true);
+    expect(decision.selected_command).toBe("npm test");
+    expect(decision.fallback_reason).toBe("surface_change");
+  });
 });

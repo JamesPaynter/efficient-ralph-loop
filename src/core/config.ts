@@ -31,6 +31,15 @@ const ControlPlaneChecksSchema = z
   })
   .strict();
 
+const ControlPlaneSurfacePatternsSchema = z
+  .object({
+    contract: z.array(z.string().min(1)).optional(),
+    config: z.array(z.string().min(1)).optional(),
+    migration: z.array(z.string().min(1)).optional(),
+    "public-entrypoint": z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
 const ControlPlaneSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -40,6 +49,7 @@ const ControlPlaneSchema = z
     scope_mode: ControlPlaneScopeModeSchema.default("enforce"),
     lock_mode: ControlPlaneLockModeSchema.default("declared"),
     checks: ControlPlaneChecksSchema.default({}),
+    surface_patterns: ControlPlaneSurfacePatternsSchema.default({}),
   })
   .strict();
 
@@ -175,6 +185,7 @@ export type ControlPlaneScopeMode = z.infer<typeof ControlPlaneScopeModeSchema>;
 export type ControlPlaneLockMode = z.infer<typeof ControlPlaneLockModeSchema>;
 export type ControlPlaneChecksMode = z.infer<typeof ControlPlaneChecksModeSchema>;
 export type ControlPlaneChecksConfig = z.infer<typeof ControlPlaneChecksSchema>;
+export type ControlPlaneSurfacePatternsConfig = z.infer<typeof ControlPlaneSurfacePatternsSchema>;
 export type DockerConfig = z.infer<typeof DockerSchema>;
 export type DockerNetworkMode = z.infer<typeof DockerNetworkModeSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

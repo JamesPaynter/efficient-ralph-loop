@@ -30,6 +30,7 @@ The checkset falls back to the global doctor when:
 
 - required components exceed `max_components_for_scoped`
 - any required component is missing a mapping
+- surface changes are detected (contracts/config/migrations/public entrypoints)
 
 When the dependency graph is missing or low-confidence, impacted components widen to all
 components; if that set is too large, the fallback triggers automatically.
@@ -50,6 +51,11 @@ Each task writes one JSON report at:
   "task_name": "Scoped checkset computation",
   "required_components": ["component-a"],
   "selected_command": "npm run test:component-a",
+  "surface_change": {
+    "is_surface_change": false,
+    "categories": [],
+    "matched_files": {}
+  },
   "confidence": "high",
   "rationale": []
 }
