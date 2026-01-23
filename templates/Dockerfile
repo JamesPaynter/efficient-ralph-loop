@@ -22,10 +22,13 @@ RUN apt-get update && apt-get install -y \
 COPY package.json package-lock.json tsconfig.json ./
 COPY index.ts ./
 COPY src ./src
+COPY scripts ./scripts
+COPY templates ./templates
 COPY worker ./worker
 
 RUN npm ci
 RUN npm run build
+RUN ln -s ../templates dist/templates || true
 
 
 FROM node:20-bookworm
@@ -49,6 +52,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/templates ./templates
 COPY bin ./bin
 
 # Create non-root user for worker processes
