@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { readJsonlFromCursor } from "../core/log-query.js";
+import { readJsonlFromCursor, taskEventsLogPathForId } from "../core/log-query.js";
 import { resolveRunLogsDir } from "../core/paths.js";
 import { loadRunStateForProject, summarizeRunState } from "../core/state-store.js";
 
@@ -24,6 +24,7 @@ type ResolvedUiRouterOptions = UiRouterOptions & {
 type ApiRouteMatch =
   | { type: "summary"; projectName: string; runId: string }
   | { type: "orchestrator_events"; projectName: string; runId: string }
+  | { type: "task_events"; projectName: string; runId: string; taskId: string }
   | { type: "bad_request" }
   | { type: "not_found" };
 
@@ -134,6 +135,11 @@ async function handleApiRequest(
 
   if (route.type === "orchestrator_events") {
     await handleOrchestratorEventsRequest(res, method, url, route);
+    return;
+  }
+
+  if (route.type === "task_events") {
+    await handleTaskEventsRequest(res, method, url, route);
     return;
   }
 
@@ -261,6 +267,59 @@ async function handleOrchestratorEventsRequest(
   );
 }
 
+async function handleTaskEventsRequest(
+  res: ServerResponse,
+  method: string,
+  url: URL,
+  route: { projectName: string; runId: string; taskId: string },
+): Promise<void> {
+  const cursorResult = parseCursorParam(url.searchParams.get("cursor"));
+  if (!cursorResult.ok) {
+    sendApiError(res, 400, "bad_request", "Invalid cursor value.", method === "HEAD");
+    return;
+  }
+
+  const maxBytesResult = parseOptionalNonNegativeInteger(url.searchParams.get("maxBytes"));
+  if (!maxBytesResult.ok) {
+    sendApiError(res, 400, "bad_request", "Invalid maxBytes value.", method === "HEAD");
+    return;
+  }
+
+  const typeGlob = parseOptionalString(url.searchParams.get("typeGlob"));
+
+  const resolved = resolveRunLogsDir(route.projectName, route.runId);
+  if (!resolved) {
+    sendApiError(res, 404, "not_found", "Run logs not found.", method === "HEAD");
+    return;
+  }
+
+  const logPath = taskEventsLogPathForId(resolved.dir, route.taskId);
+  if (!logPath) {
+    sendApiError(res, 404, "not_found", "Task logs not found.", method === "HEAD");
+    return;
+  }
+
+  const readOptions = maxBytesResult.value === null ? {} : { maxBytes: maxBytesResult.value };
+  const result = await readJsonlFromCursor(
+    logPath,
+    cursorResult.value,
+    { typeGlob },
+    readOptions,
+  );
+
+  sendApiOk(
+    res,
+    {
+      file: normalizeLogPath(resolved.dir, logPath),
+      cursor: result.cursor,
+      nextCursor: result.nextCursor,
+      truncated: result.truncated,
+      lines: result.lines,
+    },
+    method === "HEAD",
+  );
+}
+
 function matchApiRoute(pathname: string): ApiRouteMatch {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 6) {
@@ -295,6 +354,31 @@ function matchApiRoute(pathname: string): ApiRouteMatch {
     }
 
     return { type: "orchestrator_events", ...parsed };
+  }
+
+  if (segments.length === 8) {
+    const [api, projects, projectSegment, runs, runSegment, tasks, taskSegment, events] = segments;
+    if (
+      api !== "api" ||
+      projects !== "projects" ||
+      runs !== "runs" ||
+      tasks !== "tasks" ||
+      events !== "events"
+    ) {
+      return { type: "not_found" };
+    }
+
+    const parsed = parseProjectRunSegments(projectSegment, runSegment);
+    if (!parsed) {
+      return { type: "bad_request" };
+    }
+
+    const taskId = safeDecodeSegment(taskSegment);
+    if (!taskId) {
+      return { type: "bad_request" };
+    }
+
+    return { type: "task_events", ...parsed, taskId };
   }
 
   return { type: "not_found" };
@@ -555,6 +639,11 @@ function parseCursorParam(value: string | null): { ok: true; value: number } | {
   }
 
   return { ok: true, value: parsed.value ?? 0 };
+}
+
+function normalizeLogPath(baseDir: string, filePath: string): string {
+  const relativePath = path.relative(baseDir, filePath);
+  return relativePath.split(path.sep).join("/");
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
