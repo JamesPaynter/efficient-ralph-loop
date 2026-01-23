@@ -55,4 +55,22 @@
 ### Phase UI-3: Build + Tests
 - [ ] [084 - Build/packaging (dist/ui) + unit/smoke tests (cursor tail + endpoints)](.mycelium/tasks/084-build-packaging-tests-ui/spec.md)
 
+
+## UI Visualizer — Garden + Map Views
+
+- [ ] 085 — UI multi-view shell + routing (List / Garden / Map)
+- [ ] 086 — Garden view MVP: forest floor + landmarks + running mushrooms
+- [ ] 087 — Garden: stable layout + transitions + reduced-motion
+- [ ] 088 — Garden: activity ribbons via cursor-tail task events (pulses)
+- [ ] 089 — Garden: click-through inspector drawer (reuse List task detail)
+- [ ] 090 — Garden: mycelium threads overlay (Level 1: orchestrator knot + pulsing threads)
+
+- [ ] 091 — API: code graph snapshot (control-plane model + component stats)
+- [ ] 092 — Map view MVP: deterministic mycelium network render (SVG)
+- [ ] 093 — Map: growth semantics (thickness, mushrooms, fairies grounded in metrics)
+- [ ] 094 — Map: component inspector + subgraph highlighting
+
+- [ ] 095 — Packaging + smoke tests for Garden + Map views
+
+
 - [ ] ALL_TASKS_COMPLETE
