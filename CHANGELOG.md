@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-01-23
+- Added Control Plane dependency edges (workspace packages + TypeScript imports) plus `cp deps`/`cp rdeps` queries with confidence labels.
 - Added Control Plane blast radius diff helpers and tests covering diff/against path collection.
 - Added commit-addressed Control Plane model storage with build locks, metadata, and `cp build`/`cp info` lifecycle commands.
 - Pinned runs to Control Plane base SHA snapshots, persisted metadata in run state, and added resume coverage to keep the base SHA stable.
