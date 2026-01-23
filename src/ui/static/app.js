@@ -40,7 +40,7 @@ const viewActions = {
 
 const views = {
   list: createListView({ appState, actions: viewActions, fetchApi }),
-  garden: createGardenView({ appState, actions: viewActions }),
+  garden: createGardenView({ appState, actions: viewActions, fetchApi }),
   map: createMapView(),
 };
 
@@ -81,6 +81,7 @@ function wireControls() {
   elements.pauseTailToggle.addEventListener("change", () => {
     appState.pollingPaused = elements.pauseTailToggle.checked;
     views.list.setPollingPaused(appState.pollingPaused);
+    views.garden.setPollingPaused?.(appState.pollingPaused);
   });
 
   for (const tab of elements.viewTabs) {

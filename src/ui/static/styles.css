@@ -484,6 +484,10 @@ body {
   filter: blur(1px);
 }
 
+.mushroom.pulse .mushroom-body {
+  animation: mushroom-pulse 0.4s ease;
+}
+
 .mushroom-cap {
   width: 72px;
   height: 38px;
@@ -541,15 +545,26 @@ body {
   white-space: nowrap;
 }
 
-.mushroom-status {
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 3px 10px;
+.mushroom-ribbon {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90px;
+  padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(42, 124, 111, 0.18);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   color: var(--accent-strong);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  box-shadow: 0 6px 12px rgba(41, 50, 44, 0.16);
+  pointer-events: none;
 }
 
 .panel {
@@ -1006,6 +1021,18 @@ body {
   }
 }
 
+@keyframes mushroom-pulse {
+  0% {
+    box-shadow: 0 0 0 rgba(42, 124, 111, 0);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(42, 124, 111, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(42, 124, 111, 0);
+  }
+}
+
 @keyframes float-in {
   from {
     opacity: 0;
@@ -1034,6 +1061,10 @@ body {
   }
 
   .pulse {
+    animation: none !important;
+  }
+
+  .mushroom.pulse .mushroom-body {
     animation: none !important;
   }
 
