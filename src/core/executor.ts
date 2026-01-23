@@ -50,7 +50,7 @@ import {
   type JsonObject,
 } from "./logger.js";
 import { loadTaskSpecs } from "./task-loader.js";
-import { normalizeLocks, type TaskSpec } from "./task-manifest.js";
+import { normalizeFiles, normalizeLocks, type TaskSpec } from "./task-manifest.js";
 import {
   orchestratorHome,
   orchestratorLogPath,
@@ -59,6 +59,7 @@ import {
   taskBlastReportPath,
   taskChecksetReportPath,
   taskDerivedScopeReportPath,
+  taskPolicyReportPath,
   taskLogsDir,
   taskWorkspaceDir,
   workerCodexHomeDir,
@@ -121,11 +122,11 @@ import {
   type ControlPlaneBlastRadiusReport,
 } from "../control-plane/integration/blast-radius.js";
 import {
-  associateSurfaceChangesWithComponents,
   detectSurfaceChanges,
   resolveSurfacePatterns,
 } from "../control-plane/policy/surface-detect.js";
 import type {
+  PolicyDecision,
   SurfaceChangeDetection,
   SurfacePatternSet,
 } from "../control-plane/policy/types.js";
@@ -135,6 +136,10 @@ import {
   resolveDoctorCommandForChecksetMode,
   type ChecksetDecision,
 } from "../control-plane/policy/checkset.js";
+import {
+  classifyAutonomyTier,
+  shouldForceGlobalChecksForTier,
+} from "../control-plane/policy/tier.js";
 
 const LABEL_PREFIX = "mycelium";
 
@@ -704,27 +709,12 @@ type ChecksetReport = {
   surface_change: SurfaceChangeDetection;
 };
 
-async function detectSurfaceChangesForRepo(input: {
-  repoPath: string;
-  baseSha: string;
+function detectSurfaceChangesForManifest(input: {
+  manifest: TaskSpec["manifest"];
   surfacePatterns: SurfacePatternSet;
-  model?: ControlPlaneModel;
-}): Promise<SurfaceChangeDetection> {
-  const detection = input.baseSha.trim()
-    ? detectSurfaceChanges(
-        await listChangedFiles(input.repoPath, input.baseSha),
-        input.surfacePatterns,
-      )
-    : detectSurfaceChanges([], input.surfacePatterns);
-
-  if (!input.model) {
-    return detection;
-  }
-
-  return associateSurfaceChangesWithComponents({
-    detection,
-    model: input.model,
-  });
+}): SurfaceChangeDetection {
+  const writeGlobs = normalizeFiles(input.manifest.files).writes;
+  return detectSurfaceChanges(writeGlobs, input.surfacePatterns);
 }
 
 function resolveTaskTouchedComponents(input: {
@@ -859,22 +849,78 @@ function filterSurfaceDetectionForTask(input: {
   };
 }
 
-function computeTaskCheckset(input: {
+
+// =============================================================================
+// POLICY DECISIONS
+// =============================================================================
+
+type TaskPolicyDecisionResult = {
+  policyDecision: PolicyDecision;
+  checksetDecision: ChecksetDecision;
+  checksetReport: ChecksetReport;
+  doctorCommand: string;
+};
+
+function resolvePolicyLocks(input: {
+  task: TaskSpec;
+  derivedScopeReports: Map<string, DerivedScopeReport>;
+}): PolicyDecision["locks"] {
+  const declared = normalizeLocks(input.task.manifest.locks);
+  const report = input.derivedScopeReports.get(input.task.manifest.id);
+
+  if (!report) {
+    return { declared };
+  }
+
+  const derivedLocks = report.derived_locks ?? {
+    reads: [],
+    writes: report.derived_write_resources,
+  };
+
+  return { declared, derived: normalizeLocks(derivedLocks) };
+}
+
+function resolveRepoRootFallback(input: {
+  taskId: string;
+  derivedScopeReports: Map<string, DerivedScopeReport>;
+  fallbackResource: string;
+}): boolean {
+  const report = input.derivedScopeReports.get(input.taskId);
+  if (!report) {
+    return false;
+  }
+
+  const fallbackResource = input.fallbackResource.trim();
+  const derivedWrites = report.derived_locks?.writes ?? report.derived_write_resources;
+
+  if (fallbackResource.length > 0 && derivedWrites.includes(fallbackResource)) {
+    return true;
+  }
+
+  return report.confidence === "low";
+}
+
+function computeTaskPolicyDecision(input: {
   task: TaskSpec;
   derivedScopeReports: Map<string, DerivedScopeReport>;
   componentResourcePrefix: string;
   blastContext: BlastRadiusContext | null;
   checksConfig: ControlPlaneChecksRunConfig;
   defaultDoctorCommand: string;
-  surfaceDetection: SurfaceChangeDetection;
-}): { decision: ChecksetDecision; report: ChecksetReport } {
+  surfacePatterns: SurfacePatternSet;
+  fallbackResource: string;
+}): TaskPolicyDecisionResult {
   const touchedComponents = resolveTaskTouchedComponents({
     task: input.task,
     derivedScopeReports: input.derivedScopeReports,
     componentResourcePrefix: input.componentResourcePrefix,
   });
+  const detectedSurface = detectSurfaceChangesForManifest({
+    manifest: input.task.manifest,
+    surfacePatterns: input.surfacePatterns,
+  });
   const surfaceDetection = filterSurfaceDetectionForTask({
-    detection: input.surfaceDetection,
+    detection: detectedSurface,
     touchedComponents,
   });
   const impact =
@@ -884,27 +930,78 @@ function computeTaskCheckset(input: {
           model: input.blastContext.model,
         })
       : null;
+  const impactedComponents = impact?.impactedComponents ?? touchedComponents;
+  const impactConfidence = impact?.confidence ?? "low";
   const fallbackCommand =
     input.checksConfig.fallbackCommand?.trim() || input.defaultDoctorCommand;
+  const hasRepoRootFallback = resolveRepoRootFallback({
+    taskId: input.task.manifest.id,
+    derivedScopeReports: input.derivedScopeReports,
+    fallbackResource: input.fallbackResource,
+  });
+  const tier = classifyAutonomyTier({
+    surfaceCategories: surfaceDetection.categories,
+    impactedComponentCount: impactedComponents.length,
+    touchedComponentCount: touchedComponents.length,
+    hasRepoRootFallback,
+  });
 
-  const decision = computeChecksetDecision({
+  const checksetDecision = computeChecksetDecision({
     touchedComponents,
     impactedComponents: impact?.impactedComponents,
-    impactConfidence: impact?.confidence,
+    impactConfidence,
     impactWideningReasons: impact?.wideningReasons,
     commandsByComponent: input.checksConfig.commandsByComponent,
     maxComponentsForScoped: input.checksConfig.maxComponentsForScoped,
     fallbackCommand,
     surfaceChange: surfaceDetection.is_surface_change,
     surfaceChangeCategories: surfaceDetection.categories,
+    forceFallback: shouldForceGlobalChecksForTier(tier)
+      ? { reason: "tier_high_risk", rationale: [`tier:${tier}`] }
+      : undefined,
   });
 
-  const report = buildChecksetReport({
+  const checksetReport = buildChecksetReport({
     task: input.task,
-    decision,
+    decision: checksetDecision,
     surfaceDetection,
   });
-  return { decision, report };
+  const doctorCommand = resolveDoctorCommandForChecksetMode({
+    mode: input.checksConfig.mode,
+    decision: checksetDecision,
+    defaultDoctorCommand: input.defaultDoctorCommand,
+  });
+  const policyDecision: PolicyDecision = {
+    tier,
+    surface_change: surfaceDetection.is_surface_change,
+    blast_radius: {
+      touched: touchedComponents.length,
+      impacted: impactedComponents.length,
+      confidence: impactConfidence,
+    },
+    checks: {
+      mode: input.checksConfig.mode,
+      selected_command: doctorCommand,
+      rationale: checksetDecision.rationale,
+    },
+    locks: resolvePolicyLocks({
+      task: input.task,
+      derivedScopeReports: input.derivedScopeReports,
+    }),
+  };
+
+  return { policyDecision, checksetDecision, checksetReport, doctorCommand };
+}
+
+function resolveCompliancePolicyForTier(input: {
+  basePolicy: ManifestEnforcementPolicy;
+  tier?: PolicyDecision["tier"];
+}): ManifestEnforcementPolicy {
+  if (input.basePolicy === "off" || input.basePolicy === "block") {
+    return input.basePolicy;
+  }
+
+  return (input.tier ?? 0) >= 2 ? "block" : "warn";
 }
 
 export async function runProject(
@@ -1117,6 +1214,7 @@ export async function runProject(
     controlPlaneSnapshot,
     orchestratorLog: orchLog,
   });
+  const policyDecisions = new Map<string, PolicyDecision>();
   const lockResolver = buildTaskLockResolver({
     lockMode,
     derivedScopeReports,
@@ -1783,6 +1881,11 @@ export async function runProject(
         r.taskId,
         r.taskSlug,
       );
+      const policyDecision = policyDecisions.get(r.taskId);
+      const effectiveCompliancePolicy = resolveCompliancePolicyForTier({
+        basePolicy: compliancePolicy,
+        tier: policyDecision?.tier,
+      });
       const compliance = await runManifestCompliance({
         workspacePath: r.workspace,
         mainBranch: config.main_branch,
@@ -1793,14 +1896,14 @@ export async function runProject(
         ownerResolver: resourceContext.ownerResolver,
         ownershipResolver: resourceContext.ownershipResolver,
         resourcesMode: resourceContext.resourcesMode,
-        policy: compliancePolicy,
+        policy: effectiveCompliancePolicy,
         reportPath: complianceReportPath,
       });
 
       logComplianceEvents({
         taskId: r.taskId,
         taskSlug: r.taskSlug,
-        policy: compliancePolicy,
+        policy: effectiveCompliancePolicy,
         scopeMode: scopeComplianceMode,
         reportPath: complianceReportPath,
         result: compliance,
@@ -1814,7 +1917,7 @@ export async function runProject(
           taskId: r.taskId,
           violations: compliance.violations.length,
           report_path: complianceReportPath,
-          policy: compliancePolicy,
+          policy: effectiveCompliancePolicy,
         });
 
         const rescope = computeRescopeFromCompliance(taskSpec.manifest, compliance);
@@ -2344,16 +2447,6 @@ export async function runProject(
       lock_mode: lockMode,
     });
 
-    const surfaceDetection =
-      checksetMode === "off"
-        ? detectSurfaceChanges([])
-        : await detectSurfaceChangesForRepo({
-            repoPath,
-            baseSha: controlPlaneSnapshot?.base_sha ?? config.main_branch,
-            surfacePatterns: controlPlaneConfig.surfacePatterns,
-            model: blastContext?.model,
-          });
-
     if (opts.dryRun) {
       logOrchestratorEvent(orchLog, "batch.dry_run", { batch_id: batchId, tasks: batchTaskIds });
       // Mark all as skipped for dry-run
@@ -2379,38 +2472,48 @@ export async function runProject(
           task.manifest.name,
         );
         const defaultDoctorCommand = task.manifest.verify?.doctor ?? config.doctor;
-        const checksetResult =
-          checksetMode === "off"
-            ? null
-            : computeTaskCheckset({
-                task,
-                derivedScopeReports,
-                componentResourcePrefix: controlPlaneConfig.componentResourcePrefix,
-                blastContext,
-                checksConfig: controlPlaneConfig.checks,
-                defaultDoctorCommand,
-                surfaceDetection,
-              });
+        const policyResult = controlPlaneConfig.enabled
+          ? computeTaskPolicyDecision({
+              task,
+              derivedScopeReports,
+              componentResourcePrefix: controlPlaneConfig.componentResourcePrefix,
+              blastContext,
+              checksConfig: controlPlaneConfig.checks,
+              defaultDoctorCommand,
+              surfacePatterns: controlPlaneConfig.surfacePatterns,
+              fallbackResource: controlPlaneConfig.fallbackResource,
+            })
+          : null;
 
-        if (checksetResult) {
-          const reportPath = taskChecksetReportPath(repoPath, runId, taskId);
+        if (policyResult) {
+          policyDecisions.set(taskId, policyResult.policyDecision);
+          const policyReportPath = taskPolicyReportPath(repoPath, runId, taskId);
           try {
-            await writeJsonFile(reportPath, checksetResult.report);
+            await writeJsonFile(policyReportPath, policyResult.policyDecision);
           } catch (error) {
-            logOrchestratorEvent(orchLog, "task.checkset.error", {
+            logOrchestratorEvent(orchLog, "task.policy.error", {
               taskId,
               task_slug: taskSlug,
               message: formatErrorMessage(error),
             });
           }
+
+          if (checksetMode !== "off") {
+            const reportPath = taskChecksetReportPath(repoPath, runId, taskId);
+            try {
+              await writeJsonFile(reportPath, policyResult.checksetReport);
+            } catch (error) {
+              logOrchestratorEvent(orchLog, "task.checkset.error", {
+                taskId,
+                task_slug: taskSlug,
+                message: formatErrorMessage(error),
+              });
+            }
+          }
         }
 
-        const doctorCommand = checksetResult
-          ? resolveDoctorCommandForChecksetMode({
-              mode: checksetMode,
-              decision: checksetResult.decision,
-              defaultDoctorCommand,
-            })
+        const doctorCommand = policyResult
+          ? policyResult.doctorCommand
           : defaultDoctorCommand;
 
         const workspace = taskWorkspaceDir(projectName, runId, taskId);

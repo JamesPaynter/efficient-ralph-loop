@@ -31,6 +31,7 @@ The checkset falls back to the global doctor when:
 - required components exceed `max_components_for_scoped`
 - any required component is missing a mapping
 - surface changes are detected but impact data is unavailable
+- autonomy tiering flags a high-risk task (`tier_high_risk`)
 
 When surface changes are detected and impact data is available, the checkset widens to the
 impacted component set (reverse deps) and still respects the scoped component cap.
