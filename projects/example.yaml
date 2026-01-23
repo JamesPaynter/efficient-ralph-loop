@@ -63,6 +63,13 @@ resources:
       - yarn.lock
       - Dockerfile*
 
+# Optional control plane config for derived component resources
+control_plane:
+  enabled: false
+  component_resource_prefix: "component:"
+  fallback_resource: "repo-root"
+  resources_mode: "prefer-derived"
+
 planner:
   provider: codex
   model: o3

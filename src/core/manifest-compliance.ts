@@ -2,7 +2,11 @@ import path from "node:path";
 
 import { minimatch } from "minimatch";
 
-import type { ManifestEnforcementPolicy, ResourceConfig } from "./config.js";
+import type {
+  ControlPlaneResourcesMode,
+  ManifestEnforcementPolicy,
+  ResourceConfig,
+} from "./config.js";
 import type { TaskManifest } from "./task-manifest.js";
 import { listChangedFiles } from "../git/changes.js";
 import { writeJsonFile } from "./utils.js";
@@ -50,11 +54,23 @@ type FileResource = {
   resources: string[];
 };
 
+export type ResourceOwnerResolver = (filePath: string) => string | null;
+
+export type ResolveResourcesOptions = {
+  ownerResolver?: ResourceOwnerResolver;
+  staticResources: ResourceConfig[];
+  fallbackResource: string;
+  resourcesMode?: ControlPlaneResourcesMode;
+};
+
 export type ManifestComplianceArgs = {
   workspacePath: string;
   mainBranch: string;
   manifest: TaskManifest;
   resources: ResourceConfig[];
+  fallbackResource: string;
+  ownerResolver?: ResourceOwnerResolver;
+  resourcesMode?: ControlPlaneResourcesMode;
   policy: ManifestEnforcementPolicy;
   reportPath?: string;
 };
@@ -87,7 +103,14 @@ export async function runManifestCompliance(
     };
   }
 
-  const changedFiles = await collectChangedFiles(args.workspacePath, args.mainBranch, args.resources);
+  const changedFiles = await collectChangedFiles({
+    workspacePath: args.workspacePath,
+    mainBranch: args.mainBranch,
+    staticResources: args.resources,
+    fallbackResource: args.fallbackResource,
+    ownerResolver: args.ownerResolver,
+    resourcesMode: args.resourcesMode,
+  });
   const violations = findViolations(changedFiles, args.manifest);
   const status: ManifestComplianceStatus =
     violations.length === 0 ? "pass" : args.policy === "block" ? "block" : "warn";
@@ -110,15 +133,23 @@ export async function runManifestCompliance(
 // INTERNALS
 // =============================================================================
 
-async function collectChangedFiles(
-  workspacePath: string,
-  mainBranch: string,
-  resources: ResourceConfig[],
-): Promise<FileResource[]> {
-  const changed = await listChangedFiles(workspacePath, mainBranch);
+async function collectChangedFiles(input: {
+  workspacePath: string;
+  mainBranch: string;
+  staticResources: ResourceConfig[];
+  fallbackResource: string;
+  ownerResolver?: ResourceOwnerResolver;
+  resourcesMode?: ControlPlaneResourcesMode;
+}): Promise<FileResource[]> {
+  const changed = await listChangedFiles(input.workspacePath, input.mainBranch);
   return changed.map((file) => ({
     path: file,
-    resources: matchResources(file, resources),
+    resources: resolveResourcesForFile(file, {
+      ownerResolver: input.ownerResolver,
+      staticResources: input.staticResources,
+      fallbackResource: input.fallbackResource,
+      resourcesMode: input.resourcesMode,
+    }),
   }));
 }
 
@@ -149,6 +180,24 @@ function findViolations(files: FileResource[], manifest: TaskManifest): Manifest
   }
 
   return violations;
+}
+
+export function resolveResourcesForFile(file: string, options: ResolveResourcesOptions): string[] {
+  const mode = options.resourcesMode ?? "prefer-derived";
+
+  if (mode === "prefer-derived") {
+    const ownedResource = options.ownerResolver?.(file) ?? null;
+    if (ownedResource) {
+      return [ownedResource];
+    }
+  }
+
+  const matches = matchResources(file, options.staticResources);
+  if (matches.length > 0) {
+    return matches;
+  }
+
+  return options.fallbackResource ? [options.fallbackResource] : [];
 }
 
 function matchResources(file: string, resources: ResourceConfig[]): string[] {

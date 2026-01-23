@@ -6,7 +6,7 @@ import fse from "fs-extra";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ResourceConfig } from "./config.js";
-import { runManifestCompliance } from "./manifest-compliance.js";
+import { resolveResourcesForFile, runManifestCompliance } from "./manifest-compliance.js";
 import type { TaskManifest } from "./task-manifest.js";
 
 describe("runManifestCompliance", () => {
@@ -51,6 +51,7 @@ describe("runManifestCompliance", () => {
       mainBranch: "main",
       manifest,
       resources,
+      fallbackResource: "repo-root",
       policy: "warn",
       reportPath,
     });
@@ -96,6 +97,7 @@ describe("runManifestCompliance", () => {
       mainBranch: "main",
       manifest,
       resources,
+      fallbackResource: "repo-root",
       policy: "block",
     });
 
@@ -103,6 +105,44 @@ describe("runManifestCompliance", () => {
     expect(result.violations).not.toHaveLength(0);
     expect(result.violations[0]?.reasons).toContain("resource_not_locked_for_write");
     expect(result.violations[0]?.reasons).toContain("file_not_declared_for_write");
+  });
+});
+
+describe("resolveResourcesForFile", () => {
+  const staticResources: ResourceConfig[] = [
+    { name: "backend", description: "Backend", paths: ["src/**"] },
+    { name: "docs", description: "Docs", paths: ["docs/**"] },
+  ];
+  const fallbackResource = "repo-root";
+
+  it("prefers component resources when an owner is resolved", () => {
+    const resources = resolveResourcesForFile("src/app.ts", {
+      ownerResolver: (file) => (file.startsWith("src/") ? "component:api" : null),
+      staticResources,
+      fallbackResource,
+    });
+
+    expect(resources).toEqual(["component:api"]);
+  });
+
+  it("falls back to static resources when no owner is resolved", () => {
+    const resources = resolveResourcesForFile("docs/guide.md", {
+      ownerResolver: () => null,
+      staticResources,
+      fallbackResource,
+    });
+
+    expect(resources).toEqual(["docs"]);
+  });
+
+  it("uses the fallback resource when nothing matches", () => {
+    const resources = resolveResourcesForFile("misc/notes.txt", {
+      ownerResolver: () => null,
+      staticResources,
+      fallbackResource,
+    });
+
+    expect(resources).toEqual([fallbackResource]);
   });
 });
 

@@ -22,9 +22,11 @@ import { ensureCodexAuthForHome } from "./codexAuth.js";
 import { resolveCodexReasoningEffort } from "./codex-reasoning.js";
 
 import type {
+  ControlPlaneResourcesMode,
   DoctorValidatorConfig,
   ManifestEnforcementPolicy,
   ProjectConfig,
+  ResourceConfig,
   ValidatorMode,
 } from "./config.js";
 import {
@@ -74,7 +76,7 @@ import {
   type ValidatorResult,
   type ValidatorStatus,
 } from "./state.js";
-import { ensureDir, defaultRunId, isoNow, writeJsonFile } from "./utils.js";
+import { ensureDir, defaultRunId, isoNow, readJsonFile, writeJsonFile } from "./utils.js";
 import { prepareTaskWorkspace } from "./workspaces.js";
 import {
   runDoctorValidator,
@@ -91,6 +93,11 @@ import { computeRescopeFromCompliance } from "./manifest-rescope.js";
 import { isMockLlmEnabled } from "../llm/mock.js";
 import { buildControlPlaneModel } from "../control-plane/model/build.js";
 import { ControlPlaneStore } from "../control-plane/storage.js";
+import type { ControlPlaneModel } from "../control-plane/model/schema.js";
+import {
+  createComponentOwnerResolver,
+  deriveComponentResources,
+} from "../control-plane/integration/resources.js";
 
 const LABEL_PREFIX = "mycelium";
 
@@ -239,11 +246,19 @@ function buildContainerSecurityPayload(config: ProjectConfig["docker"]): JsonObj
 
 type ControlPlaneRunConfig = {
   enabled: boolean;
+  componentResourcePrefix: string;
+  fallbackResource: string;
+  resourcesMode: ControlPlaneResourcesMode;
 };
 
 function resolveControlPlaneConfig(config: ProjectConfig): ControlPlaneRunConfig {
-  const raw = (config as ProjectConfig & { control_plane?: { enabled?: boolean } }).control_plane;
-  return { enabled: raw?.enabled === true };
+  const raw = (config.control_plane ?? {}) as Partial<ProjectConfig["control_plane"]>;
+  return {
+    enabled: raw.enabled === true,
+    componentResourcePrefix: raw.component_resource_prefix ?? "component:",
+    fallbackResource: raw.fallback_resource ?? "repo-root",
+    resourcesMode: raw.resources_mode ?? "prefer-derived",
+  };
 }
 
 async function buildControlPlaneSnapshot(input: {
@@ -274,6 +289,101 @@ async function buildControlPlaneSnapshot(input: {
     schema_version: metadata.schema_version,
     extractor_versions: metadata.extractor_versions,
   };
+}
+
+type ResourceResolutionContext = {
+  staticResources: ResourceConfig[];
+  knownResources: string[];
+  ownerResolver?: (filePath: string) => string | null;
+  fallbackResource: string;
+  resourcesMode: ControlPlaneResourcesMode;
+};
+
+type LoadedControlPlaneModel = {
+  baseSha: string;
+  model: ControlPlaneModel;
+};
+
+async function loadControlPlaneModel(input: {
+  enabled: boolean;
+  snapshot: ControlPlaneSnapshot | undefined;
+}): Promise<LoadedControlPlaneModel | null> {
+  if (!input.enabled || !input.snapshot?.enabled) {
+    return null;
+  }
+
+  if (!input.snapshot.base_sha || !input.snapshot.model_path) {
+    throw new Error("Control plane snapshot missing model metadata.");
+  }
+
+  const model = await readJsonFile<ControlPlaneModel>(input.snapshot.model_path);
+  return { baseSha: input.snapshot.base_sha, model };
+}
+
+async function buildResourceResolutionContext(input: {
+  repoPath: string;
+  controlPlaneConfig: ControlPlaneRunConfig;
+  controlPlaneSnapshot: ControlPlaneSnapshot | undefined;
+  staticResources: ResourceConfig[];
+}): Promise<ResourceResolutionContext> {
+  const fallbackResource = input.controlPlaneConfig.enabled
+    ? input.controlPlaneConfig.fallbackResource
+    : "";
+  const resourcesMode = input.controlPlaneConfig.resourcesMode;
+  const derivedResources: ResourceConfig[] = [];
+  let ownerResolver: ((filePath: string) => string | null) | undefined;
+
+  const loadedModel = await loadControlPlaneModel({
+    enabled: input.controlPlaneConfig.enabled,
+    snapshot: input.controlPlaneSnapshot,
+  });
+
+  if (loadedModel) {
+    const componentResources = deriveComponentResources({
+      repoPath: input.repoPath,
+      baseSha: loadedModel.baseSha,
+      model: loadedModel.model,
+      componentResourcePrefix: input.controlPlaneConfig.componentResourcePrefix,
+    });
+    derivedResources.push(...componentResources);
+    ownerResolver = createComponentOwnerResolver({
+      model: loadedModel.model,
+      componentResourcePrefix: input.controlPlaneConfig.componentResourcePrefix,
+    });
+  }
+
+  const knownResources = mergeResourceNames({
+    staticResources: input.staticResources,
+    derivedResources,
+    fallbackResource,
+  });
+
+  return {
+    staticResources: input.staticResources,
+    knownResources,
+    ownerResolver,
+    fallbackResource,
+    resourcesMode,
+  };
+}
+
+function mergeResourceNames(input: {
+  staticResources: ResourceConfig[];
+  derivedResources: ResourceConfig[];
+  fallbackResource: string;
+}): string[] {
+  const names = new Set<string>();
+  for (const resource of input.staticResources) {
+    names.add(resource.name);
+  }
+  for (const resource of input.derivedResources) {
+    names.add(resource.name);
+  }
+  if (input.fallbackResource) {
+    names.add(input.fallbackResource);
+  }
+
+  return Array.from(names).sort();
 }
 
 export async function runProject(
@@ -398,11 +508,18 @@ export async function runProject(
     await stateStore.save(state);
   }
 
+  const resourceContext = await buildResourceResolutionContext({
+    repoPath,
+    controlPlaneConfig,
+    controlPlaneSnapshot,
+    staticResources: config.resources,
+  });
+
   // Load tasks.
   let tasks: TaskSpec[];
   try {
     const res = await loadTaskSpecs(repoPath, config.tasks_dir, {
-      knownResources: config.resources.map((r) => r.name),
+      knownResources: resourceContext.knownResources,
     });
     tasks = res.tasks;
   } catch (err) {
@@ -1066,7 +1183,10 @@ export async function runProject(
         workspacePath: r.workspace,
         mainBranch: config.main_branch,
         manifest: taskSpec.manifest,
-        resources: config.resources,
+        resources: resourceContext.staticResources,
+        fallbackResource: resourceContext.fallbackResource,
+        ownerResolver: resourceContext.ownerResolver,
+        resourcesMode: resourceContext.resourcesMode,
         policy: manifestPolicy,
         reportPath: complianceReportPath,
       });
