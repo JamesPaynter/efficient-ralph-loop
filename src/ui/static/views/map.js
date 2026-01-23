@@ -37,6 +37,11 @@ export function createMapView({ appState } = {}) {
     snapshot: null,
     resizeObserver: null,
     resizeFrameId: null,
+    selectedComponentId: null,
+    shouldDimNonNeighbors: true,
+    graphData: null,
+    nodeElementsById: new Map(),
+    edgeElements: [],
   };
 
   const elements = {
@@ -56,6 +61,28 @@ export function createMapView({ appState } = {}) {
     messageTitle: null,
     messageCopy: null,
     messageDetail: null,
+    inspector: {
+      panel: null,
+      subtext: null,
+      closeButton: null,
+      dimToggle: null,
+      componentId: null,
+      rootsList: null,
+      depsList: null,
+      reverseDepsList: null,
+      stats: {
+        codeLoc: null,
+        codeFiles: null,
+        unitTestFiles: null,
+        integrationTestFiles: null,
+        e2eTestFiles: null,
+      },
+      commands: {
+        showComponent: null,
+        showDependencies: null,
+        showReverseDependencies: null,
+      },
+    },
   };
 
   return {
@@ -79,6 +106,7 @@ export function createMapView({ appState } = {}) {
     container.classList.add("map-view");
 
     buildShell();
+    wireInspectorControls();
     attachResizeObserver();
     renderEmptyState();
   }
@@ -112,6 +140,9 @@ export function createMapView({ appState } = {}) {
 
     header.append(titleWrap, meta);
 
+    const body = document.createElement("div");
+    body.className = "map-body";
+
     const stage = document.createElement("div");
     stage.className = "map-stage";
 
@@ -140,7 +171,10 @@ export function createMapView({ appState } = {}) {
     message.append(messageCard);
     stage.append(svg, legend.wrap, message);
 
-    shell.append(header, stage);
+    const inspector = buildInspectorPanel();
+
+    body.append(stage, inspector.panel);
+    shell.append(header, body);
     container.append(shell);
 
     elements.shell = shell;
@@ -157,6 +191,16 @@ export function createMapView({ appState } = {}) {
     elements.messageTitle = messageTitle;
     elements.messageCopy = messageCopy;
     elements.messageDetail = messageDetail;
+    elements.inspector.panel = inspector.panel;
+    elements.inspector.subtext = inspector.subtext;
+    elements.inspector.closeButton = inspector.closeButton;
+    elements.inspector.dimToggle = inspector.dimToggle;
+    elements.inspector.componentId = inspector.componentId;
+    elements.inspector.rootsList = inspector.rootsList;
+    elements.inspector.depsList = inspector.depsList;
+    elements.inspector.reverseDepsList = inspector.reverseDepsList;
+    elements.inspector.stats = inspector.stats;
+    elements.inspector.commands = inspector.commands;
   }
 
   function buildMetaItem(label) {
@@ -290,6 +334,214 @@ export function createMapView({ appState } = {}) {
     return svg;
   }
 
+  function buildInspectorPanel() {
+    const panel = document.createElement("aside");
+    panel.className = "map-inspector panel";
+    panel.hidden = true;
+
+    const header = document.createElement("div");
+    header.className = "panel-header";
+
+    const titleWrap = document.createElement("div");
+
+    const title = document.createElement("h2");
+    title.textContent = "Component";
+
+    const subtext = document.createElement("div");
+    subtext.className = "subtext";
+    subtext.textContent = "Select a node to inspect.";
+
+    titleWrap.append(title, subtext);
+
+    const meta = document.createElement("div");
+    meta.className = "panel-meta";
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "drawer-close";
+    closeButton.setAttribute("aria-label", "Close inspector");
+    closeButton.textContent = "✕";
+    meta.append(closeButton);
+
+    header.append(titleWrap, meta);
+
+    const body = document.createElement("div");
+    body.className = "detail-body";
+
+    const controls = document.createElement("div");
+    controls.className = "map-inspector-controls";
+
+    const dimToggleLabel = document.createElement("label");
+    dimToggleLabel.className = "toggle";
+
+    const dimToggle = document.createElement("input");
+    dimToggle.type = "checkbox";
+    dimToggle.checked = viewState.shouldDimNonNeighbors;
+
+    const dimToggleText = document.createElement("span");
+    dimToggleText.textContent = "Dim non-neighbors";
+
+    dimToggleLabel.append(dimToggle, dimToggleText);
+    controls.append(dimToggleLabel);
+
+    const componentSection = createInspectorSection("Component");
+    const componentIdRow = createInspectorRow("Component ID");
+    componentSection.body.append(componentIdRow.row);
+
+    const rootsSection = createInspectorSection("Roots");
+    const rootsList = document.createElement("div");
+    rootsList.className = "map-inspector-list";
+    rootsSection.body.append(rootsList);
+
+    const dependenciesSection = createInspectorSection("Dependencies");
+    const dependenciesList = document.createElement("div");
+    dependenciesList.className = "map-inspector-list";
+    dependenciesSection.body.append(dependenciesList);
+
+    const reverseDependenciesSection = createInspectorSection("Reverse dependencies");
+    const reverseDependenciesList = document.createElement("div");
+    reverseDependenciesList.className = "map-inspector-list";
+    reverseDependenciesSection.body.append(reverseDependenciesList);
+
+    const statsSection = createInspectorSection("Stats");
+    const statsGrid = document.createElement("div");
+    statsGrid.className = "detail-meta";
+
+    const codeLocEntry = createStatsEntry("Code LOC");
+    const codeFilesEntry = createStatsEntry("Code files");
+    const unitTestsEntry = createStatsEntry("Unit test files");
+    const integrationTestsEntry = createStatsEntry("Integration test files");
+    const e2eTestsEntry = createStatsEntry("E2E test files");
+
+    statsGrid.append(
+      codeLocEntry.wrapper,
+      codeFilesEntry.wrapper,
+      unitTestsEntry.wrapper,
+      integrationTestsEntry.wrapper,
+      e2eTestsEntry.wrapper,
+    );
+    statsSection.body.append(statsGrid);
+
+    const commandsSection = createInspectorSection("Control Plane commands");
+    const showCommand = buildCommandRow("Show component");
+    const dependenciesCommand = buildCommandRow("Show deps");
+    const reverseDependenciesCommand = buildCommandRow("Show reverse deps");
+
+    commandsSection.body.append(
+      showCommand.row,
+      dependenciesCommand.row,
+      reverseDependenciesCommand.row,
+    );
+
+    body.append(
+      controls,
+      componentSection.section,
+      rootsSection.section,
+      dependenciesSection.section,
+      reverseDependenciesSection.section,
+      statsSection.section,
+      commandsSection.section,
+    );
+
+    panel.append(header, body);
+
+    return {
+      panel,
+      subtext,
+      closeButton,
+      dimToggle,
+      componentId: componentIdRow.value,
+      rootsList,
+      depsList: dependenciesList,
+      reverseDepsList: reverseDependenciesList,
+      stats: {
+        codeLoc: codeLocEntry.value,
+        codeFiles: codeFilesEntry.value,
+        unitTestFiles: unitTestsEntry.value,
+        integrationTestFiles: integrationTestsEntry.value,
+        e2eTestFiles: e2eTestsEntry.value,
+      },
+      commands: {
+        showComponent: showCommand,
+        showDependencies: dependenciesCommand,
+        showReverseDependencies: reverseDependenciesCommand,
+      },
+    };
+  }
+
+  function createInspectorSection(title) {
+    const section = document.createElement("div");
+    section.className = "map-inspector-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+
+    const body = document.createElement("div");
+    body.className = "map-inspector-section-body";
+
+    section.append(heading, body);
+    return { section, body };
+  }
+
+  function createInspectorRow(labelText) {
+    const row = document.createElement("div");
+    row.className = "map-inspector-row";
+
+    const label = document.createElement("div");
+    label.className = "map-inspector-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("div");
+    value.className = "map-inspector-value";
+    value.textContent = "—";
+
+    row.append(label, value);
+    return { row, value };
+  }
+
+  function createStatsEntry(labelText) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "meta-item";
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = labelText;
+
+    const value = document.createElement("span");
+    value.className = "value";
+    value.textContent = "—";
+
+    wrapper.append(label, value);
+    return { wrapper, value };
+  }
+
+  function buildCommandRow(labelText) {
+    const row = document.createElement("div");
+    row.className = "map-command-row";
+
+    const label = document.createElement("div");
+    label.className = "map-command-label";
+    label.textContent = labelText;
+
+    const controls = document.createElement("div");
+    controls.className = "map-command-controls";
+
+    const input = document.createElement("input");
+    input.className = "map-command-input";
+    input.type = "text";
+    input.readOnly = true;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn tiny ghost";
+    button.textContent = "Copy";
+
+    controls.append(input, button);
+    row.append(label, controls);
+
+    return { row, input, button };
+  }
+
   function attachResizeObserver() {
     if (!elements.stage || typeof ResizeObserver === "undefined") {
       return;
@@ -305,6 +557,40 @@ export function createMapView({ appState } = {}) {
     viewState.resizeObserver.observe(elements.stage);
   }
 
+  function wireInspectorControls() {
+    if (elements.inspector.closeButton) {
+      elements.inspector.closeButton.addEventListener("click", () => {
+        clearSelection();
+      });
+    }
+
+    if (elements.inspector.dimToggle) {
+      elements.inspector.dimToggle.addEventListener("change", () => {
+        viewState.shouldDimNonNeighbors = elements.inspector.dimToggle.checked;
+        applyGraphHighlighting();
+      });
+    }
+
+    if (elements.svg) {
+      elements.svg.addEventListener("click", (event) => {
+        const clickedNode = event.target?.closest?.(".map-node");
+        if (clickedNode) {
+          return;
+        }
+        clearSelection();
+      });
+    }
+
+    for (const command of Object.values(elements.inspector.commands)) {
+      if (!command?.button) {
+        continue;
+      }
+      command.button.addEventListener("click", () => {
+        void copyCommandToClipboard(command.input.value, command.input);
+      });
+    }
+  }
+
 
   // =============================================================================
   // VIEW STATE
@@ -314,6 +600,10 @@ export function createMapView({ appState } = {}) {
     viewState.snapshot = null;
     viewState.isLoading = false;
     viewState.requestId += 1;
+    viewState.graphData = null;
+    viewState.nodeElementsById.clear();
+    viewState.edgeElements = [];
+    clearSelection();
     renderEmptyState();
   }
 
@@ -414,7 +704,9 @@ export function createMapView({ appState } = {}) {
   function renderEmptyState() {
     updateSubtext();
     updateMeta(null);
+    viewState.graphData = null;
     clearSvg();
+    clearSelection();
     setLegendVisibility(false);
     showMessage({
       title: "Map view",
@@ -441,7 +733,9 @@ export function createMapView({ appState } = {}) {
     if (baseSha) {
       setMetaValue(elements.meta.baseSha, baseSha);
     }
+    viewState.graphData = null;
     clearSvg();
+    clearSelection();
 
     if (error?.code === "MODEL_NOT_FOUND") {
       renderModelMissingPrompt(baseSha);
@@ -481,7 +775,9 @@ export function createMapView({ appState } = {}) {
     const integrationDoctorPassed = snapshot.run_quality?.integration_doctor_passed ?? null;
 
     if (!components.length) {
+      viewState.graphData = null;
       clearSvg();
+      clearSelection();
       setLegendVisibility(false);
       showMessage({
         title: "No components found",
@@ -490,6 +786,15 @@ export function createMapView({ appState } = {}) {
       });
       return;
     }
+
+    const componentsById = buildComponentsById(components);
+    const dependencyMaps = buildDependencyMaps(componentsById, deps);
+    viewState.graphData = {
+      componentsById,
+      depsOut: dependencyMaps.depsOut,
+      depsIn: dependencyMaps.depsIn,
+      statsById,
+    };
 
     hideMessage();
     clearSvg();
@@ -502,6 +807,7 @@ export function createMapView({ appState } = {}) {
       statsById,
       shouldAnimateFairies: integrationDoctorPassed === true,
     });
+    syncSelectionWithGraph();
   }
 
   function renderGraphSvg({ components, deps, stageSize, statsById, shouldAnimateFairies }) {
@@ -511,6 +817,9 @@ export function createMapView({ appState } = {}) {
     elements.svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     elements.svg.setAttribute("width", String(width));
     elements.svg.setAttribute("height", String(height));
+
+    viewState.nodeElementsById.clear();
+    viewState.edgeElements = [];
 
     const graphData = buildGraphLayout({
       components,
@@ -525,6 +834,9 @@ export function createMapView({ appState } = {}) {
       const path = createSvgElement("path", "map-hypha");
       path.setAttribute("d", edge.path);
       path.setAttribute("stroke-width", edge.strokeWidth.toFixed(2));
+      path.dataset.edgeFrom = edge.from;
+      path.dataset.edgeTo = edge.to;
+      viewState.edgeElements.push({ element: path, from: edge.from, to: edge.to });
       edgesGroup.append(path);
     }
 
@@ -533,6 +845,20 @@ export function createMapView({ appState } = {}) {
       const nodeGroup = createSvgElement("g", "map-node");
       nodeGroup.setAttribute("transform", `translate(${node.x}, ${node.y})`);
       nodeGroup.setAttribute("data-node-id", node.id);
+      nodeGroup.setAttribute("role", "button");
+      nodeGroup.setAttribute("tabindex", "0");
+      nodeGroup.setAttribute("aria-label", `Inspect component ${node.id}`);
+      nodeGroup.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSelectedComponentId(node.id);
+      });
+      nodeGroup.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setSelectedComponentId(node.id);
+        }
+      });
+      viewState.nodeElementsById.set(node.id, nodeGroup);
 
       const tooltip = createSvgElement("title");
       tooltip.textContent = node.tooltip;
@@ -695,6 +1021,9 @@ export function createMapView({ appState } = {}) {
     while (elements.svg.firstChild) {
       elements.svg.removeChild(elements.svg.firstChild);
     }
+
+    viewState.nodeElementsById.clear();
+    viewState.edgeElements = [];
   }
 
   function updateSubtext() {
@@ -737,6 +1066,232 @@ export function createMapView({ appState } = {}) {
     }
 
     target.textContent = value;
+  }
+
+
+  // =============================================================================
+  // GRAPH DATA
+  // =============================================================================
+
+  function buildComponentsById(components) {
+    const componentsById = new Map();
+    for (const component of components) {
+      if (!component?.id) {
+        continue;
+      }
+      componentsById.set(component.id, component);
+    }
+    return componentsById;
+  }
+
+  function buildDependencyMaps(componentsById, deps) {
+    const depsOut = new Map();
+    const depsIn = new Map();
+
+    for (const id of componentsById.keys()) {
+      depsOut.set(id, new Set());
+      depsIn.set(id, new Set());
+    }
+
+    for (const edge of deps) {
+      const from = edge?.from;
+      const to = edge?.to;
+      if (!from || !to) {
+        continue;
+      }
+      if (!componentsById.has(from) || !componentsById.has(to)) {
+        continue;
+      }
+      depsOut.get(from).add(to);
+      depsIn.get(to).add(from);
+    }
+
+    return { depsOut, depsIn };
+  }
+
+
+  // =============================================================================
+  // INSPECTOR + HIGHLIGHTING
+  // =============================================================================
+
+  function setSelectedComponentId(componentId) {
+    viewState.selectedComponentId = componentId || null;
+    updateInspectorForSelection();
+    applyGraphHighlighting();
+  }
+
+  function clearSelection() {
+    setSelectedComponentId(null);
+  }
+
+  function syncSelectionWithGraph() {
+    const selectedId = viewState.selectedComponentId;
+    const graphData = viewState.graphData;
+
+    if (!selectedId || !graphData?.componentsById.has(selectedId)) {
+      setSelectedComponentId(null);
+      return;
+    }
+
+    updateInspectorForSelection();
+    applyGraphHighlighting();
+  }
+
+  function updateInspectorForSelection() {
+    if (!elements.inspector.panel || !elements.inspector.subtext) {
+      return;
+    }
+
+    const selectedId = viewState.selectedComponentId;
+    const graphData = viewState.graphData;
+
+    if (!selectedId || !graphData?.componentsById.has(selectedId)) {
+      elements.inspector.subtext.textContent = "Select a node to inspect.";
+      setInspectorOpen(false);
+      return;
+    }
+
+    const component = graphData.componentsById.get(selectedId);
+    const roots = Array.isArray(component?.roots) ? component.roots : [];
+    const dependencies = Array.from(graphData.depsOut.get(selectedId) ?? []).sort();
+    const reverseDependencies = Array.from(graphData.depsIn.get(selectedId) ?? []).sort();
+    const stats = getComponentStats(graphData.statsById, selectedId);
+
+    elements.inspector.subtext.textContent = `Inspecting ${selectedId}`;
+    setInspectorValue(elements.inspector.componentId, selectedId);
+    renderInspectorList(elements.inspector.rootsList, roots, "No roots recorded.");
+    renderInspectorList(elements.inspector.depsList, dependencies, "No direct deps.");
+    renderInspectorList(elements.inspector.reverseDepsList, reverseDependencies, "No reverse deps.");
+
+    setInspectorValue(elements.inspector.stats.codeLoc, String(stats.code_loc));
+    setInspectorValue(elements.inspector.stats.codeFiles, String(stats.code_files));
+    setInspectorValue(elements.inspector.stats.unitTestFiles, String(stats.unit_test_files));
+    setInspectorValue(
+      elements.inspector.stats.integrationTestFiles,
+      String(stats.integration_test_files),
+    );
+    setInspectorValue(elements.inspector.stats.e2eTestFiles, String(stats.e2e_test_files));
+
+    setCommandValue(
+      elements.inspector.commands.showComponent,
+      `mycelium cp components show ${selectedId}`,
+    );
+    setCommandValue(
+      elements.inspector.commands.showDependencies,
+      `mycelium cp deps ${selectedId}`,
+    );
+    setCommandValue(
+      elements.inspector.commands.showReverseDependencies,
+      `mycelium cp rdeps ${selectedId}`,
+    );
+
+    setInspectorOpen(true);
+  }
+
+  function setInspectorValue(target, value) {
+    if (!target) {
+      return;
+    }
+    target.textContent = value;
+  }
+
+  function renderInspectorList(listElement, values, emptyMessage) {
+    if (!listElement) {
+      return;
+    }
+
+    listElement.innerHTML = "";
+
+    if (!values.length) {
+      const empty = document.createElement("div");
+      empty.className = "map-inspector-empty";
+      empty.textContent = emptyMessage;
+      listElement.append(empty);
+      return;
+    }
+
+    for (const value of values) {
+      const item = document.createElement("div");
+      item.className = "map-inspector-item";
+      item.textContent = String(value);
+      listElement.append(item);
+    }
+  }
+
+  function setCommandValue(command, value) {
+    if (!command?.input) {
+      return;
+    }
+    command.input.value = value;
+  }
+
+  function applyGraphHighlighting() {
+    const highlight = buildHighlightContext();
+    const shouldDim = viewState.shouldDimNonNeighbors;
+
+    for (const [id, node] of viewState.nodeElementsById.entries()) {
+      const isSelected = Boolean(highlight && id === highlight.selectedId);
+      const isNeighbor = Boolean(highlight && highlight.neighborIds.has(id));
+      node.classList.toggle("is-selected", isSelected);
+      node.classList.toggle("is-neighbor", isNeighbor);
+      node.classList.toggle("is-dimmed", Boolean(highlight && shouldDim && !isSelected && !isNeighbor));
+    }
+
+    for (const edge of viewState.edgeElements) {
+      const isActive =
+        Boolean(highlight) &&
+        (edge.from === highlight.selectedId || edge.to === highlight.selectedId);
+      edge.element.classList.toggle("is-active", isActive);
+      edge.element.classList.toggle("is-dimmed", Boolean(highlight && shouldDim && !isActive));
+    }
+  }
+
+  function buildHighlightContext() {
+    const selectedId = viewState.selectedComponentId;
+    const graphData = viewState.graphData;
+    if (!selectedId || !graphData) {
+      return null;
+    }
+
+    const neighborIds = new Set();
+    for (const neighbor of graphData.depsOut.get(selectedId) ?? []) {
+      neighborIds.add(neighbor);
+    }
+    for (const neighbor of graphData.depsIn.get(selectedId) ?? []) {
+      neighborIds.add(neighbor);
+    }
+    neighborIds.delete(selectedId);
+
+    return { selectedId, neighborIds };
+  }
+
+  function setInspectorOpen(isOpen) {
+    if (!elements.inspector.panel || !elements.shell) {
+      return;
+    }
+
+    elements.inspector.panel.hidden = !isOpen;
+    elements.shell.classList.toggle("is-inspector-open", isOpen);
+  }
+
+  async function copyCommandToClipboard(commandText, fallbackInput) {
+    if (!commandText) {
+      return;
+    }
+
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(commandText);
+        return;
+      } catch (error) {
+        // Fall back to selecting the input for manual copy.
+      }
+    }
+
+    if (fallbackInput) {
+      fallbackInput.focus();
+      fallbackInput.select();
+    }
   }
 
 
