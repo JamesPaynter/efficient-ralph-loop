@@ -22,7 +22,7 @@
 
 ## Control Plane — Phase B (graph-derived scope, locks, and safety policy)
 
-- [ ] [065 - Pin Control Plane model to a run (base SHA handshake)](.mycelium/tasks/065-pin-control-plane-model-to-a-run-base-sha-handshake/spec.md) (Effort <M>, Tier <standard>)
+- [x] [065 - Pin Control Plane model to a run (base SHA handshake)](.mycelium/tasks/065-pin-control-plane-model-to-a-run-base-sha-handshake/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [066 - Graph-derived resources (components) merged into scheduling + manifest enforcement](.mycelium/tasks/066-graph-derived-resources-components-merged-into-scheduling-manifest-enforcement/spec.md) (Effort <L>, Tier <pro>)
 - [ ] [067 - Derived scope engine (shadow reports)](.mycelium/tasks/067-derived-scope-engine-shadow-reports/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [068 - Scheduler lock mode: declared vs shadow vs derived (opt-in)](.mycelium/tasks/068-scheduler-lock-mode-declared-vs-shadow-vs-derived-opt-in/spec.md) (Effort <M>, Tier <standard>)

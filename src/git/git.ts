@@ -50,6 +50,17 @@ export async function headSha(cwd: string): Promise<string> {
   return res.stdout.trim();
 }
 
+export async function resolveRunBaseSha(repoPath: string, mainBranch: string): Promise<string> {
+  const branch = await currentBranch(repoPath);
+  if (branch !== mainBranch) {
+    throw new GitError(
+      `Expected ${mainBranch} to be checked out before resolving base SHA (found ${branch}).`,
+    );
+  }
+
+  return headSha(repoPath);
+}
+
 export async function getRemoteUrl(cwd: string, remote = "origin"): Promise<string | null> {
   try {
     const res = await git(cwd, ["config", "--get", `remote.${remote}.url`]);

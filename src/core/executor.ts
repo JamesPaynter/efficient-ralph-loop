@@ -15,7 +15,7 @@ import {
 } from "../docker/docker.js";
 import { buildWorkerImage } from "../docker/image.js";
 import { streamContainerLogs, type LogStreamHandle } from "../docker/streams.js";
-import { ensureCleanWorkingTree, checkout } from "../git/git.js";
+import { ensureCleanWorkingTree, checkout, resolveRunBaseSha } from "../git/git.js";
 import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
 import { ensureCodexAuthForHome } from "./codexAuth.js";
@@ -69,6 +69,7 @@ import {
   resetTaskToPending,
   startBatch,
   type CheckpointCommit,
+  type ControlPlaneSnapshot,
   type RunState,
   type ValidatorResult,
   type ValidatorStatus,
@@ -88,6 +89,8 @@ import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
 import { runManifestCompliance, type ManifestComplianceResult } from "./manifest-compliance.js";
 import { computeRescopeFromCompliance } from "./manifest-rescope.js";
 import { isMockLlmEnabled } from "../llm/mock.js";
+import { buildControlPlaneModel } from "../control-plane/model/build.js";
+import { ControlPlaneStore } from "../control-plane/storage.js";
 
 const LABEL_PREFIX = "mycelium";
 
@@ -234,6 +237,45 @@ function buildContainerSecurityPayload(config: ProjectConfig["docker"]): JsonObj
   return payload;
 }
 
+type ControlPlaneRunConfig = {
+  enabled: boolean;
+};
+
+function resolveControlPlaneConfig(config: ProjectConfig): ControlPlaneRunConfig {
+  const raw = (config as ProjectConfig & { control_plane?: { enabled?: boolean } }).control_plane;
+  return { enabled: raw?.enabled === true };
+}
+
+async function buildControlPlaneSnapshot(input: {
+  repoPath: string;
+  baseSha: string;
+  enabled: boolean;
+}): Promise<ControlPlaneSnapshot> {
+  if (!input.enabled) {
+    return {
+      enabled: false,
+      base_sha: input.baseSha,
+    };
+  }
+
+  const buildResult = await buildControlPlaneModel({
+    repoRoot: input.repoPath,
+    baseSha: input.baseSha,
+  });
+  const metadata = buildResult.metadata;
+  const store = new ControlPlaneStore(input.repoPath);
+
+  return {
+    enabled: true,
+    base_sha: buildResult.base_sha,
+    model_hash: metadata.model_hash,
+    model_path: store.getModelPath(buildResult.base_sha),
+    built_at: metadata.built_at,
+    schema_version: metadata.schema_version,
+    extractor_versions: metadata.extractor_versions,
+  };
+}
+
 export async function runProject(
   projectName: string,
   config: ProjectConfig,
@@ -268,11 +310,13 @@ export async function runProject(
     const containerSecurityPayload = buildContainerSecurityPayload(config.docker);
     const networkMode = config.docker.network_mode;
     const containerUser = config.docker.user;
+    const controlPlaneConfig = resolveControlPlaneConfig(config);
   const docker = useDocker ? dockerClient() : null;
   const manifestPolicy: ManifestEnforcementPolicy = config.manifest_enforcement ?? "warn";
   const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
   const mockLlmMode = isMockLlmEnabled() || config.worker.model === "mock";
   let stopRequested: StopRequest | null = null;
+  let state: RunState;
 
   // Prepare directories
   await ensureDir(orchestratorHome());
@@ -307,6 +351,53 @@ export async function runProject(
     await execa("git", ["checkout", "-b", config.main_branch], { cwd: repoPath, stdio: "pipe" });
   });
 
+  const runResumeReason = isResume ? "resume_command" : "existing_state";
+  const hadExistingState = await stateStore.exists();
+  if (hadExistingState) {
+    state = await stateStore.load();
+
+    if (state.status !== "running") {
+      logRunResume(orchLog, { status: state.status, reason: runResumeReason });
+      logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_not_running" });
+      closeValidatorLogs();
+      orchLog.close();
+      return { runId, state, plan: plannedBatches };
+    }
+  } else if (isResume) {
+    logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_missing" });
+    orchLog.close();
+    throw new Error(`Cannot resume run ${runId}: state file not found.`);
+  }
+
+  let controlPlaneSnapshot: ControlPlaneSnapshot | undefined = hadExistingState
+    ? state.control_plane
+    : undefined;
+  if (!controlPlaneSnapshot?.base_sha) {
+    const baseSha = await resolveRunBaseSha(repoPath, config.main_branch);
+    controlPlaneSnapshot = await buildControlPlaneSnapshot({
+      repoPath,
+      baseSha,
+      enabled: controlPlaneConfig.enabled,
+    });
+  }
+
+  if (hadExistingState) {
+    if (!state.control_plane?.base_sha) {
+      state.control_plane = controlPlaneSnapshot;
+      await stateStore.save(state);
+    }
+  } else {
+    state = createRunState({
+      runId,
+      project: projectName,
+      repoPath,
+      mainBranch: config.main_branch,
+      taskIds: [],
+      controlPlane: controlPlaneSnapshot,
+    });
+    await stateStore.save(state);
+  }
+
   // Load tasks.
   let tasks: TaskSpec[];
   try {
@@ -332,13 +423,7 @@ export async function runProject(
     orchLog.close();
     return {
       runId,
-      state: createRunState({
-        runId,
-        project: projectName,
-        repoPath,
-        mainBranch: config.main_branch,
-        taskIds: [],
-      }),
+      state,
       plan: plannedBatches,
     };
   }
@@ -382,7 +467,6 @@ export async function runProject(
   }
 
   // Create or resume run state
-  let state: RunState;
   const backfillUsageFromLogs = (): boolean => {
     let updated = false;
     const beforeTokens = state.tokens_used ?? 0;
@@ -408,36 +492,24 @@ export async function runProject(
     }
     return updated;
   };
-  const stateExists = await stateStore.exists();
-  if (stateExists) {
-    state = await stateStore.load();
-
-    const runResumeReason = isResume ? "resume_command" : "existing_state";
-    if (state.status !== "running") {
-      logRunResume(orchLog, { status: state.status, reason: runResumeReason });
-      logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_not_running" });
-      closeValidatorLogs();
-      orchLog.close();
-      return { runId, state, plan: plannedBatches };
+  // Ensure new tasks found in the manifest are tracked for this run.
+  for (const t of tasks) {
+    if (!state.tasks[t.manifest.id]) {
+      state.tasks[t.manifest.id] = {
+        status: "pending",
+        attempts: 0,
+        checkpoint_commits: [],
+        validator_results: [],
+        human_review: undefined,
+        tokens_used: 0,
+        estimated_cost: 0,
+        usage_by_attempt: [],
+      };
     }
+  }
+  await stateStore.save(state);
 
-    // Ensure new tasks found in the manifest are tracked for this run.
-    for (const t of tasks) {
-      if (!state.tasks[t.manifest.id]) {
-        state.tasks[t.manifest.id] = {
-          status: "pending",
-          attempts: 0,
-          checkpoint_commits: [],
-          validator_results: [],
-          human_review: undefined,
-          tokens_used: 0,
-          estimated_cost: 0,
-          usage_by_attempt: [],
-        };
-      }
-    }
-    await stateStore.save(state);
-
+  if (hadExistingState) {
     const usageBackfilled = backfillUsageFromLogs();
     if (usageBackfilled) {
       await stateStore.save(state);
@@ -449,21 +521,6 @@ export async function runProject(
       reason: runResumeReason,
       runningTasks,
     });
-  } else {
-    if (isResume) {
-      logOrchestratorEvent(orchLog, "run.resume.blocked", { reason: "state_missing" });
-      orchLog.close();
-      throw new Error(`Cannot resume run ${runId}: state file not found.`);
-    }
-
-    state = createRunState({
-      runId,
-      project: projectName,
-      repoPath,
-      mainBranch: config.main_branch,
-      taskIds: tasks.map((t) => t.manifest.id),
-    });
-    await stateStore.save(state);
   }
 
   const resolveStopReason = (): StopRequest | null => {
