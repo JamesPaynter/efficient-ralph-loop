@@ -47,6 +47,12 @@ export function createGardenView({ appState, actions, fetchApi }) {
   const EVENTS_POLL_INTERVAL_MS = 2000;
   const MAX_EVENT_BYTES = 32768;
   const PULSE_DURATION_MS = 400;
+  const KNOT_POSITION = { xPct: 50, yPct: 65 };
+  const KNOT_RADIUS_RANGE = { min: 6, max: 14 };
+  const KNOT_RADIUS_SCALE = 0.015;
+  const THREAD_CURVE_RANGE = { min: 18, max: 42 };
+  const THREAD_TENSION_RANGE = { min: 0.3, max: 0.55 };
+  const THREAD_DRIFT_RANGE = { min: -0.08, max: 0.08 };
   const slotColumnPositions = buildSlotColumnPositions();
 
   const viewState = {
@@ -60,6 +66,13 @@ export function createGardenView({ appState, actions, fetchApi }) {
     garden: null,
     landmarks: null,
     bed: null,
+    myceliumOverlay: null,
+    myceliumThreads: null,
+    myceliumKnotGlow: null,
+    myceliumKnotCore: null,
+    myceliumThreadByTaskId: new Map(),
+    myceliumUpdateId: null,
+    myceliumResizeObserver: null,
     emptyState: null,
     emptyTitleEl: null,
     emptyCopyEl: null,
@@ -72,6 +85,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     spawnTimeouts: new Map(),
     despawnTimeouts: new Map(),
     pulseTimeouts: new Map(),
+    pulseUntilByTaskId: new Map(),
     eventCursorByTaskId: new Map(),
     lastEventTypeByTaskId: new Map(),
     lastEventAtByTaskId: new Map(),
@@ -112,6 +126,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     clearPendingMushroomTimers();
     clearEventTracking();
     clearMushrooms();
+    clearMyceliumThreads();
     stopEventsPolling();
     if (viewState.inspector) {
       viewState.inspector.reset();
@@ -213,6 +228,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     updateEmptyState(emptyTitle, emptyCopy, runningTasks.length === 0);
     syncSlotAssignments(runningTasks);
     syncMushrooms(runningTasks);
+    scheduleMyceliumOverlayUpdate();
     syncRunningTaskEventTracking(runningTasks);
     syncInspectorSelection(summary);
   }
@@ -238,6 +254,8 @@ export function createGardenView({ appState, actions, fetchApi }) {
     const garden = document.createElement("div");
     garden.className = "garden";
 
+    const { overlay, threads, knotGlow, knotCore } = createMyceliumOverlay();
+
     const landmarks = document.createElement("div");
     landmarks.className = "garden-landmarks";
 
@@ -254,7 +272,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     const { emptyState, emptyTitleEl, emptyCopyEl } = createEmptyStateElements();
     bed.appendChild(emptyState);
 
-    garden.append(landmarks, bed);
+    garden.append(overlay, landmarks, bed);
     stage.appendChild(garden);
 
     const inspectorPanel = document.createElement("aside");
@@ -268,6 +286,10 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.garden = garden;
     viewState.landmarks = landmarks;
     viewState.bed = bed;
+    viewState.myceliumOverlay = overlay;
+    viewState.myceliumThreads = threads;
+    viewState.myceliumKnotGlow = knotGlow;
+    viewState.myceliumKnotCore = knotCore;
     viewState.emptyState = emptyState;
     viewState.emptyTitleEl = emptyTitleEl;
     viewState.emptyCopyEl = emptyCopyEl;
@@ -281,6 +303,8 @@ export function createGardenView({ appState, actions, fetchApi }) {
     });
     viewState.inspector.init();
     setInspectorOpen(false);
+    startMyceliumResizeObserver();
+    scheduleMyceliumOverlayUpdate();
   }
 
   function createEmptyStateElements() {
@@ -624,6 +648,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.spawnTimeouts.clear();
     viewState.despawnTimeouts.clear();
     viewState.pulseTimeouts.clear();
+    viewState.pulseUntilByTaskId.clear();
   }
 
   function updateMushroomActivity(mushroom, taskId) {
@@ -643,10 +668,14 @@ export function createGardenView({ appState, actions, fetchApi }) {
     mushroom.classList.remove("pulse");
     void mushroom.offsetWidth;
     mushroom.classList.add("pulse");
+    viewState.pulseUntilByTaskId.set(taskId, Date.now() + PULSE_DURATION_MS);
+    scheduleMyceliumOverlayUpdate();
 
     const timeoutId = window.setTimeout(() => {
       mushroom.classList.remove("pulse");
       viewState.pulseTimeouts.delete(taskId);
+      viewState.pulseUntilByTaskId.delete(taskId);
+      scheduleMyceliumOverlayUpdate();
     }, PULSE_DURATION_MS);
 
     viewState.pulseTimeouts.set(taskId, timeoutId);
@@ -654,18 +683,16 @@ export function createGardenView({ appState, actions, fetchApi }) {
 
   function clearPulseTimeout(taskId, mushroom) {
     const timeoutId = viewState.pulseTimeouts.get(taskId);
-    if (!timeoutId) {
-      if (mushroom) {
-        mushroom.classList.remove("pulse");
-      }
-      return;
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      viewState.pulseTimeouts.delete(taskId);
     }
 
-    window.clearTimeout(timeoutId);
-    viewState.pulseTimeouts.delete(taskId);
+    viewState.pulseUntilByTaskId.delete(taskId);
     if (mushroom) {
       mushroom.classList.remove("pulse");
     }
+    scheduleMyceliumOverlayUpdate();
   }
 
 
@@ -688,6 +715,8 @@ export function createGardenView({ appState, actions, fetchApi }) {
       viewState.inspector.setActive(isOpen && viewState.isActive);
       viewState.inspector.setPollingPaused();
     }
+
+    scheduleMyceliumOverlayUpdate();
   }
 
   function openInspectorForTask(taskId) {
@@ -841,6 +870,281 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.eventCursorByTaskId.clear();
     viewState.lastEventTypeByTaskId.clear();
     viewState.lastEventAtByTaskId.clear();
+    viewState.pulseUntilByTaskId.clear();
+  }
+
+
+  // =============================================================================
+  // MYCELIUM OVERLAY
+  // =============================================================================
+
+  function createMyceliumOverlay() {
+    const overlay = createSvgElement("svg");
+    overlay.classList.add("mycelium-overlay");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute("focusable", "false");
+    overlay.setAttribute("preserveAspectRatio", "none");
+
+    const threads = createSvgElement("g");
+    threads.classList.add("mycelium-threads");
+
+    const knot = createSvgElement("g");
+    knot.classList.add("mycelium-knot");
+
+    const knotGlow = createSvgElement("circle");
+    knotGlow.classList.add("mycelium-knot-glow");
+
+    const knotCore = createSvgElement("circle");
+    knotCore.classList.add("mycelium-knot-core");
+
+    knot.append(knotGlow, knotCore);
+    overlay.append(threads, knot);
+
+    return {
+      overlay,
+      threads,
+      knotGlow,
+      knotCore,
+    };
+  }
+
+  function createSvgElement(tagName) {
+    return document.createElementNS("http://www.w3.org/2000/svg", tagName);
+  }
+
+  function scheduleMyceliumOverlayUpdate() {
+    if (viewState.myceliumUpdateId !== null) {
+      return;
+    }
+
+    viewState.myceliumUpdateId = window.requestAnimationFrame(() => {
+      viewState.myceliumUpdateId = null;
+      updateMyceliumOverlay();
+    });
+  }
+
+  function updateMyceliumOverlay() {
+    if (!viewState.garden || !viewState.myceliumOverlay || !viewState.myceliumThreads) {
+      return;
+    }
+
+    const gardenRect = viewState.garden.getBoundingClientRect();
+    if (gardenRect.width <= 0 || gardenRect.height <= 0) {
+      return;
+    }
+
+    updateMyceliumOverlayBounds(gardenRect);
+    const knotPoint = resolveKnotPoint(gardenRect);
+    updateMyceliumKnot(knotPoint, gardenRect);
+
+    const runningTasks = getRunningTasks(viewState.latestSummary);
+    updateMyceliumThreads(runningTasks, gardenRect, knotPoint);
+  }
+
+  function updateMyceliumOverlayBounds(gardenRect) {
+    const width = Math.max(1, Math.round(gardenRect.width));
+    const height = Math.max(1, Math.round(gardenRect.height));
+    viewState.myceliumOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  }
+
+  function updateMyceliumKnot(knotPoint, gardenRect) {
+    if (!viewState.myceliumKnotGlow || !viewState.myceliumKnotCore) {
+      return;
+    }
+
+    const radius = resolveKnotRadius(gardenRect);
+    const glowRadius = formatSvgNumber(radius * 1.8);
+    const coreRadius = formatSvgNumber(radius);
+    const x = formatSvgNumber(knotPoint.x);
+    const y = formatSvgNumber(knotPoint.y);
+
+    viewState.myceliumKnotGlow.setAttribute("cx", x);
+    viewState.myceliumKnotGlow.setAttribute("cy", y);
+    viewState.myceliumKnotGlow.setAttribute("r", glowRadius);
+    viewState.myceliumKnotCore.setAttribute("cx", x);
+    viewState.myceliumKnotCore.setAttribute("cy", y);
+    viewState.myceliumKnotCore.setAttribute("r", coreRadius);
+  }
+
+  function updateMyceliumThreads(runningTasks, gardenRect, knotPoint) {
+    if (!viewState.myceliumThreads) {
+      return;
+    }
+
+    const runningTaskIds = new Set(runningTasks.map((task) => String(task.id)));
+    for (const [taskId, path] of viewState.myceliumThreadByTaskId.entries()) {
+      if (runningTaskIds.has(taskId)) {
+        continue;
+      }
+      path.remove();
+      viewState.myceliumThreadByTaskId.delete(taskId);
+    }
+
+    const now = Date.now();
+    for (const task of runningTasks) {
+      const taskId = String(task.id);
+      const mushroom = viewState.mushroomByTaskId.get(taskId);
+      if (!mushroom) {
+        continue;
+      }
+
+      const targetPoint = resolveElementCenter(mushroom, gardenRect);
+      if (!targetPoint) {
+        continue;
+      }
+
+      const path = getOrCreateMyceliumThread(taskId);
+      path.setAttribute("d", buildThreadPath(knotPoint, targetPoint, taskId));
+      path.classList.toggle("pulse", isThreadPulseActive(taskId, now));
+    }
+  }
+
+  function getOrCreateMyceliumThread(taskId) {
+    const existing = viewState.myceliumThreadByTaskId.get(taskId);
+    if (existing) {
+      return existing;
+    }
+
+    const path = createSvgElement("path");
+    path.classList.add("mycelium-thread");
+    path.dataset.taskId = taskId;
+    viewState.myceliumThreadByTaskId.set(taskId, path);
+    viewState.myceliumThreads.appendChild(path);
+    return path;
+  }
+
+  function clearMyceliumThreads() {
+    for (const path of viewState.myceliumThreadByTaskId.values()) {
+      path.remove();
+    }
+    viewState.myceliumThreadByTaskId.clear();
+  }
+
+  function resolveKnotPoint(gardenRect) {
+    return {
+      x: (gardenRect.width * KNOT_POSITION.xPct) / 100,
+      y: (gardenRect.height * KNOT_POSITION.yPct) / 100,
+    };
+  }
+
+  function resolveKnotRadius(gardenRect) {
+    const baseRadius = Math.min(gardenRect.width, gardenRect.height) * KNOT_RADIUS_SCALE;
+    return clamp(baseRadius, KNOT_RADIUS_RANGE.min, KNOT_RADIUS_RANGE.max);
+  }
+
+  function resolveElementCenter(element, gardenRect) {
+    if (!element.isConnected) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2 - gardenRect.left,
+      y: rect.top + rect.height / 2 - gardenRect.top,
+    };
+  }
+
+  function buildThreadPath(startPoint, endPoint, taskId) {
+    const dx = endPoint.x - startPoint.x;
+    const dy = endPoint.y - startPoint.y;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+
+    const baseCurveStrength = scaleBetween(
+      THREAD_CURVE_RANGE.min,
+      THREAD_CURVE_RANGE.max,
+      stableRandom(taskId, "curve"),
+    );
+    const curveStrength = Math.min(baseCurveStrength, distance * 0.45);
+    const curveDirection = stableRandom(taskId, "direction") > 0.5 ? 1 : -1;
+    const drift = scaleBetween(
+      THREAD_DRIFT_RANGE.min,
+      THREAD_DRIFT_RANGE.max,
+      stableRandom(taskId, "drift"),
+    );
+    const tension = scaleBetween(
+      THREAD_TENSION_RANGE.min,
+      THREAD_TENSION_RANGE.max,
+      stableRandom(taskId, "tension"),
+    );
+
+    const perpX = -dy / distance;
+    const perpY = dx / distance;
+    const offsetX = perpX * curveStrength * curveDirection;
+    const offsetY = perpY * curveStrength * curveDirection;
+
+    const control1X = startPoint.x + dx * (0.35 + drift) + offsetX;
+    const control1Y = startPoint.y + dy * (0.35 + drift) + offsetY;
+    const control2X = startPoint.x + dx * (0.65 - drift) - offsetX * tension;
+    const control2Y = startPoint.y + dy * (0.65 - drift) - offsetY * tension;
+
+    return [
+      "M",
+      formatSvgNumber(startPoint.x),
+      formatSvgNumber(startPoint.y),
+      "C",
+      formatSvgNumber(control1X),
+      formatSvgNumber(control1Y),
+      formatSvgNumber(control2X),
+      formatSvgNumber(control2Y),
+      formatSvgNumber(endPoint.x),
+      formatSvgNumber(endPoint.y),
+    ].join(" ");
+  }
+
+  function isThreadPulseActive(taskId, now) {
+    const pulseUntil = viewState.pulseUntilByTaskId.get(taskId);
+    if (!pulseUntil) {
+      return false;
+    }
+
+    if (pulseUntil <= now) {
+      viewState.pulseUntilByTaskId.delete(taskId);
+      return false;
+    }
+
+    return true;
+  }
+
+  function stableRandom(taskId, salt) {
+    const seed = hashString(`${taskId}:${salt}`);
+    return (Math.abs(seed) % 10000) / 10000;
+  }
+
+  function hashString(value) {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = (hash << 5) - hash + value.charCodeAt(index);
+      hash |= 0;
+    }
+    return hash;
+  }
+
+  function scaleBetween(min, max, value) {
+    return min + (max - min) * value;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function formatSvgNumber(value) {
+    return String(Math.round(value * 10) / 10);
+  }
+
+  function startMyceliumResizeObserver() {
+    if (!viewState.garden || viewState.myceliumResizeObserver) {
+      return;
+    }
+
+    if (typeof ResizeObserver !== "function") {
+      window.addEventListener("resize", scheduleMyceliumOverlayUpdate);
+      return;
+    }
+
+    viewState.myceliumResizeObserver = new ResizeObserver(() => {
+      scheduleMyceliumOverlayUpdate();
+    });
+    viewState.myceliumResizeObserver.observe(viewState.garden);
   }
 
 
