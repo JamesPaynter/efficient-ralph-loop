@@ -817,7 +817,7 @@ export async function runProject(
     const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
     const mockLlmMode = isMockLlmEnabled() || config.worker.model === "mock";
     let stopRequested: StopRequest | null = null;
-    let state: RunState;
+    let state!: RunState;
 
     // Prepare directories
     await ensureDir(orchestratorHome());
