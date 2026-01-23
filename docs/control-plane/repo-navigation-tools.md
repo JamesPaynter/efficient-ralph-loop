@@ -56,6 +56,10 @@ or
 - `cp symbols def ...`
 - `cp symbols refs ...`
 
+## Phase B extensions
+
+- `cp blast --run <runId> --task <taskId>` reads per-task blast artifacts (or recomputes deterministically if missing).
+
 ## Stub behavior
 
 - All commands return exit code `1` with a structured error until implemented.

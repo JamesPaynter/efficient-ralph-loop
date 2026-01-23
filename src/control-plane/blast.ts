@@ -37,13 +37,13 @@ type ImpactedComponents = {
   usedEdges: ControlPlaneDependencyEdge[];
 };
 
-const WARNING_UNMAPPED =
+export const WARNING_UNMAPPED =
   "Unmapped paths detected; widening impacted components to all components.";
-const WARNING_MEDIUM =
+export const WARNING_MEDIUM =
   "Medium-confidence dependency edges included in blast radius.";
-const WARNING_LOW =
+export const WARNING_LOW =
   "Low-confidence dependency edges detected; widening impacted components to all components.";
-const WARNING_MISSING_DEPS =
+export const WARNING_MISSING_DEPS =
   "Dependency graph missing; widening impacted components to all components.";
 
 

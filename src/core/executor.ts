@@ -18,6 +18,7 @@ import { streamContainerLogs, type LogStreamHandle } from "../docker/streams.js"
 import { ensureCleanWorkingTree, checkout, resolveRunBaseSha } from "../git/git.js";
 import { mergeTaskBranches } from "../git/merge.js";
 import { buildTaskBranchName } from "../git/branches.js";
+import { listChangedFiles } from "../git/changes.js";
 import { ensureCodexAuthForHome } from "./codexAuth.js";
 import { resolveCodexReasoningEffort } from "./codex-reasoning.js";
 
@@ -53,6 +54,7 @@ import {
   orchestratorLogPath,
   taskEventsLogPath,
   taskComplianceReportPath,
+  taskBlastReportPath,
   taskDerivedScopeReportPath,
   taskLogsDir,
   taskWorkspaceDir,
@@ -111,6 +113,10 @@ import {
   deriveTaskWriteScopeReport,
   type DerivedScopeReport,
 } from "../control-plane/integration/derived-scope.js";
+import {
+  buildBlastRadiusReport,
+  type ControlPlaneBlastRadiusReport,
+} from "../control-plane/integration/blast-radius.js";
 
 const LABEL_PREFIX = "mycelium";
 
@@ -535,6 +541,71 @@ function buildTaskLockResolver(input: {
   };
 }
 
+
+
+// =============================================================================
+// BLAST RADIUS
+// =============================================================================
+
+type BlastRadiusContext = {
+  baseSha: string;
+  model: ControlPlaneModel;
+};
+
+async function loadBlastRadiusContext(input: {
+  controlPlaneConfig: ControlPlaneRunConfig;
+  controlPlaneSnapshot: ControlPlaneSnapshot | undefined;
+}): Promise<BlastRadiusContext | null> {
+  const loadedModel = await loadControlPlaneModel({
+    enabled: input.controlPlaneConfig.enabled,
+    snapshot: input.controlPlaneSnapshot,
+  });
+
+  if (!loadedModel) {
+    return null;
+  }
+
+  return { baseSha: loadedModel.baseSha, model: loadedModel.model };
+}
+
+async function emitBlastRadiusReport(input: {
+  repoPath: string;
+  runId: string;
+  task: TaskSpec;
+  workspacePath: string;
+  blastContext: BlastRadiusContext;
+  orchestratorLog: JsonlLogger;
+}): Promise<ControlPlaneBlastRadiusReport | null> {
+  const changedFiles = await listChangedFiles(
+    input.workspacePath,
+    input.blastContext.baseSha,
+  );
+  const report = buildBlastRadiusReport({
+    task: input.task.manifest,
+    baseSha: input.blastContext.baseSha,
+    changedFiles,
+    model: input.blastContext.model,
+  });
+  const reportPath = taskBlastReportPath(
+    input.repoPath,
+    input.runId,
+    input.task.manifest.id,
+  );
+
+  await writeJsonFile(reportPath, report);
+
+  logOrchestratorEvent(input.orchestratorLog, "task.blast_radius", {
+    taskId: input.task.manifest.id,
+    task_slug: input.task.slug,
+    report_path: reportPath,
+    confidence: report.confidence,
+    touched_components: report.touched_components.length,
+    impacted_components: report.impacted_components.length,
+  });
+
+  return report;
+}
+
 export async function runProject(
   projectName: string,
   config: ProjectConfig,
@@ -702,6 +773,10 @@ export async function runProject(
     };
   }
 
+  const blastContext = await loadBlastRadiusContext({
+    controlPlaneConfig,
+    controlPlaneSnapshot,
+  });
   const derivedScopeReports = await emitDerivedScopeReports({
     repoPath,
     runId,
@@ -1321,6 +1396,27 @@ export async function runProject(
     const rescopeFailures: { taskId: string; reason: string }[] = [];
     let doctorCanaryResult: DoctorCanaryResult | undefined;
     for (const r of params.results) {
+      const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
+
+      if (blastContext && taskSpec) {
+        try {
+          await emitBlastRadiusReport({
+            repoPath,
+            runId,
+            task: taskSpec,
+            workspacePath: r.workspace,
+            blastContext,
+            orchestratorLog: orchLog,
+          });
+        } catch (error) {
+          logOrchestratorEvent(orchLog, "task.blast_radius.error", {
+            taskId: r.taskId,
+            task_slug: taskSpec.slug,
+            message: formatErrorMessage(error),
+          });
+        }
+      }
+
       if (!r.success) {
         if (r.resetToPending) {
           const reason = r.errorMessage ?? "Task reset to pending";
@@ -1338,7 +1434,6 @@ export async function runProject(
         continue;
       }
 
-      const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
       if (!taskSpec) {
         const message = "Task spec missing during finalizeBatch";
         markTaskFailed(state, r.taskId, message);
