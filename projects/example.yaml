@@ -86,6 +86,13 @@ test_validator:
   provider: openai
   model: o3
 
+architecture_validator:
+  mode: warn
+  provider: openai
+  model: o3
+  docs_glob: ".mycelium/planning/**/architecture*.md"
+  fail_if_docs_missing: false
+
 doctor_validator:
   mode: warn
   provider: openai

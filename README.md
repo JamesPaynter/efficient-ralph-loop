@@ -5,7 +5,7 @@ LLM-driven planner and Docker-isolated Codex workers that plan tasks, run them i
 ## What works today
 - Autopilot interviews operators, drafts planning artifacts, runs the planner, and kicks off `run` with live status polling.
 - `plan`/`run`/`resume` use per-task workspaces, manifest enforcement (`off|warn|block`), auto-rescope for undeclared writes, and merge completed branches into the integration branch.
-- Validator agents (test + doctor) support `mode: warn|block`, attach per-task reports, and gate merges when block-mode trips; doctor validator also runs when integration doctor fails or the canary misbehaves.
+- Validator agents (test, style, architecture, doctor) support `mode: warn|block`, attach per-task reports, and gate merges when block-mode trips; doctor validator also runs when integration doctor fails or the canary misbehaves.
 - Strict TDD worker flow: optional Stage A (tests-only) with `verify.fast`, Stage B implementation + doctor retries, checkpoint commits, and worker state tracking (thread ids, checkpoints) to improve resume.
 - Budgets compute token/cost usage from Codex events and emit `budget.warn`/`budget.block` events; block mode halts runs when limits are crossed.
 - Logs/state live under `.mycelium` by default (set by the CLI); `logs` can stream raw JSONL or query a SQLite index for timelines/failure digests.
@@ -54,7 +54,7 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 - Resources: `resources[].paths` drive scheduler locks; manifests declare `locks.reads/writes` and `files.reads/writes`.
 - Control plane: `control_plane.enabled` derives component resources (`component_resource_prefix`), `resources_mode` selects how resources resolve (`prefer-derived`), `fallback_resource` handles unmapped files, `scope_mode` controls compliance enforcement (off/shadow/enforce), `lock_mode` selects declared/shadow/derived scheduling, `control_plane.checks.mode` (off/report/enforce) enables scoped doctor commands via `commands_by_component` with fallback to the global doctor, and `control_plane.surface_locks.enabled` adds `surface:<component>` locks for surface changes.
 - Manifest enforcement: `manifest_enforcement: off|warn|block`; violations emit `access.requested` and trigger auto-rescope when possible, unless `control_plane.scope_mode=shadow`.
-- Validators: `test_validator` and `doctor_validator` respect `enabled` + `mode` (`warn|block`); doctor validator cadence via `run_every_n_tasks` and also when integration doctor fails or the canary passes unexpectedly.
+- Validators: `test_validator`, `style_validator`, `architecture_validator`, and `doctor_validator` respect `enabled` + `mode` (`warn|block`); architecture validator uses `docs_glob` + `fail_if_docs_missing`, doctor validator cadence via `run_every_n_tasks` and also when integration doctor fails or the canary passes unexpectedly.
 - Doctor canary: configure `doctor_canary` (`mode: off|env`, `env_var`, `warn_on_unexpected_pass`) to control the integration doctor re-run and warning behavior.
 - Budgets: `budgets.mode warn|block` with `max_tokens_per_task` / `max_cost_per_run`; defaults warn.
 - Docker: `docker.image`, `dockerfile`, `build_context`, `user`, `network_mode`, `memory_mb`, `cpu_quota`, `pids_limit`; `--local-worker` skips Docker.
