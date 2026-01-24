@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .DS_Store
+.pnpm-store/
+pnpm-lock.yaml
 
 # Orchestrator runtime data
 .state/
