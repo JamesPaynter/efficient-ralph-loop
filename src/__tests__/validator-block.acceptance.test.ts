@@ -106,6 +106,72 @@ describe("acceptance: validator mode=block prevents merge and flags human review
   );
 
   it(
+    "blocks merge when architecture validator fails (mode=block)",
+    { timeout: 60_000 },
+    async () => {
+      const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mycelium-arch-validator-"));
+      tempRoots.push(tmpRoot);
+
+      const repoDir = path.join(tmpRoot, "repo");
+      await fse.copy(FIXTURE_REPO, repoDir);
+      await fs.mkdir(path.join(repoDir, "docs"), { recursive: true });
+      await fs.writeFile(
+        path.join(repoDir, "docs", "architecture.md"),
+        "# Architecture\n\n- Keep validation logic in validators/.\n",
+      );
+      await initGitRepo(repoDir);
+
+      const plannerOutputPath = path.join(tmpRoot, "mock-planner-output.json");
+      await fs.writeFile(plannerOutputPath, JSON.stringify(mockPlannerOutput(), null, 2));
+
+      const configPath = path.join(tmpRoot, "project.yaml");
+      await writeProjectConfig(configPath, repoDir, [
+        "architecture_validator:",
+        "  mode: block",
+        "  provider: mock",
+        "  model: mock",
+        "  docs_glob: \"docs/architecture*.md\"",
+        "  fail_if_docs_missing: true",
+      ]);
+
+      process.env.MYCELIUM_HOME = path.join(tmpRoot, "mycelium-home");
+      process.env.MOCK_LLM = "1";
+      process.env.MOCK_LLM_OUTPUT_PATH = plannerOutputPath;
+      delete process.env.MOCK_LLM_OUTPUT;
+      delete process.env.MOCK_CODEX_USAGE;
+
+      const config = loadProjectConfig(configPath);
+      const headBefore = await gitHead(repoDir, config.main_branch);
+
+      const planResult = await planProject("toy-project", config, {
+        input: "docs/planning/implementation-plan.md",
+      });
+      expect(planResult.tasks).toHaveLength(1);
+
+      delete process.env.MOCK_LLM_OUTPUT_PATH;
+      process.env.MOCK_LLM_OUTPUT = JSON.stringify({
+        pass: false,
+        summary: "Architecture validator failure for acceptance test",
+        concerns: [],
+        recommendations: [],
+        confidence: "high",
+      });
+
+      const runResult = await runProject("toy-project", config, {
+        maxParallel: 1,
+        useDocker: false,
+        buildImage: false,
+      });
+
+      const headAfter = await gitHead(repoDir, config.main_branch);
+
+      expect(runResult.state.status).toBe("failed");
+      expect(runResult.state.tasks["001"]?.status).toBe("needs_human_review");
+      expect(headAfter).toBe(headBefore);
+    },
+  );
+
+  it(
     "respects style validator warn vs block modes",
     { timeout: 90_000 },
     async () => {

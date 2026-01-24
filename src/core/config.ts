@@ -96,6 +96,11 @@ const ValidatorSchema = z
   })
   .strict();
 
+const ArchitectureValidatorSchema = ValidatorSchema.extend({
+  docs_glob: z.string().min(1).default(".mycelium/planning/**/architecture*.md"),
+  fail_if_docs_missing: z.boolean().default(false),
+}).strict();
+
 const DoctorValidatorSchema = ValidatorSchema.extend({
   run_every_n_tasks: z.number().int().positive().default(10),
 }).strict();
@@ -195,6 +200,7 @@ export const ProjectConfigSchema = z
 
     test_validator: ValidatorSchema.optional(),
     style_validator: ValidatorSchema.optional(),
+    architecture_validator: ArchitectureValidatorSchema.optional(),
     doctor_validator: DoctorValidatorSchema.optional(),
     log_summaries: LogSummariesSchema.optional(),
     ui: UiSchema.default({}),
@@ -207,6 +213,7 @@ export type BudgetsConfig = z.infer<typeof BudgetsSchema>;
 export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
+export type ArchitectureValidatorConfig = z.infer<typeof ArchitectureValidatorSchema>;
 export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
 export type DoctorCanaryConfig = z.infer<typeof DoctorCanarySchema>;
 export type DoctorCanaryMode = z.infer<typeof DoctorCanaryModeSchema>;

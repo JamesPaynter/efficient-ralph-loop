@@ -102,6 +102,10 @@ import {
 } from "../validators/doctor-validator.js";
 import { runTestValidator, type TestValidationReport } from "../validators/test-validator.js";
 import { runStyleValidator, type StyleValidationReport } from "../validators/style-validator.js";
+import {
+  runArchitectureValidator,
+  type ArchitectureValidationReport,
+} from "../validators/architecture-validator.js";
 import { runWorker } from "../../worker/loop.js";
 import type { WorkerLogger, WorkerLogEventInput } from "../../worker/logging.js";
 import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
@@ -969,12 +973,16 @@ export async function runProject(
     const styleValidatorConfig = config.style_validator;
     const styleValidatorMode = resolveValidatorMode(styleValidatorConfig);
     const styleValidatorEnabled = styleValidatorMode !== "off";
+    const architectureValidatorConfig = config.architecture_validator;
+    const architectureValidatorMode = resolveValidatorMode(architectureValidatorConfig);
+    const architectureValidatorEnabled = architectureValidatorMode !== "off";
     const doctorValidatorConfig = config.doctor_validator;
     const doctorValidatorMode = resolveValidatorMode(doctorValidatorConfig);
     const doctorValidatorEnabled = doctorValidatorMode !== "off";
     const doctorCanaryConfig = config.doctor_canary;
     let testValidatorLog: JsonlLogger | null = null;
     let styleValidatorLog: JsonlLogger | null = null;
+    let architectureValidatorLog: JsonlLogger | null = null;
     let doctorValidatorLog: JsonlLogger | null = null;
     const closeValidatorLogs = (): void => {
       if (testValidatorLog) {
@@ -982,6 +990,9 @@ export async function runProject(
       }
       if (styleValidatorLog) {
         styleValidatorLog.close();
+      }
+      if (architectureValidatorLog) {
+        architectureValidatorLog.close();
       }
       if (doctorValidatorLog) {
         doctorValidatorLog.close();
@@ -1149,6 +1160,12 @@ export async function runProject(
     styleValidatorLog = new JsonlLogger(validatorLogPath(projectName, runId, "style-validator"), {
       runId,
     });
+  }
+  if (architectureValidatorEnabled) {
+    architectureValidatorLog = new JsonlLogger(
+      validatorLogPath(projectName, runId, "architecture-validator"),
+      { runId },
+    );
   }
   if (doctorValidatorEnabled) {
     doctorValidatorLog = new JsonlLogger(
@@ -2068,6 +2085,84 @@ export async function runProject(
             validator: "style",
             taskId: r.taskId,
             mode: styleValidatorMode,
+            status: outcome.status,
+          });
+        }
+      }
+    }
+
+    if (architectureValidatorEnabled && architectureValidatorConfig) {
+      for (const r of readyForValidation) {
+        const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
+        if (!taskSpec) continue;
+
+        const reportPath = validatorReportPath(
+          projectName,
+          runId,
+          "architecture-validator",
+          r.taskId,
+          r.taskSlug,
+        );
+
+        let architectureResult: ArchitectureValidationReport | null = null;
+        let architectureError: string | null = null;
+        const architectureStartedAt = Date.now();
+        try {
+          architectureResult = await runArchitectureValidator({
+            projectName,
+            repoPath,
+            runId,
+            tasksRoot: tasksRootAbs,
+            task: taskSpec,
+            taskSlug: r.taskSlug,
+            workspacePath: r.workspace,
+            mainBranch: config.main_branch,
+            config: architectureValidatorConfig,
+            orchestratorLog: orchLog,
+            logger: architectureValidatorLog ?? undefined,
+          });
+        } catch (err) {
+          architectureError = err instanceof Error ? err.message : String(err);
+          logOrchestratorEvent(orchLog, "validator.error", {
+            validator: "architecture",
+            taskId: r.taskId,
+            message: architectureError,
+          });
+        } finally {
+          recordChecksetDuration(runMetrics, Date.now() - architectureStartedAt);
+        }
+
+        const outcome = await summarizeArchitectureValidatorResult(
+          reportPath,
+          architectureResult,
+          architectureError,
+        );
+        const relativeReport = relativeReportPath(projectName, runId, outcome.reportPath);
+
+        setValidatorResult(state, r.taskId, {
+          validator: "architecture",
+          status: outcome.status,
+          mode: architectureValidatorMode,
+          summary: outcome.summary ?? undefined,
+          report_path: relativeReport,
+        });
+
+        if (shouldBlockValidator(architectureValidatorMode, outcome.status)) {
+          blockedTasks.add(r.taskId);
+          const reason =
+            outcome.summary !== null && outcome.summary.trim().length > 0
+              ? `Architecture validator blocked merge: ${outcome.summary}`
+              : "Architecture validator blocked merge (mode=block)";
+          markTaskNeedsHumanReview(state, r.taskId, {
+            validator: "architecture",
+            reason,
+            summary: outcome.summary ?? undefined,
+            reportPath: relativeReport,
+          });
+          logOrchestratorEvent(orchLog, "validator.block", {
+            validator: "architecture",
+            taskId: r.taskId,
+            mode: architectureValidatorMode,
             status: outcome.status,
           });
         }
@@ -3023,6 +3118,32 @@ async function summarizeStyleValidatorResult(
   };
 }
 
+async function summarizeArchitectureValidatorResult(
+  reportPath: string,
+  result: ArchitectureValidationReport | null,
+  error?: string | null,
+): Promise<ValidatorRunSummary> {
+  const reportFromDisk = await readValidatorReport<ArchitectureValidationReport>(reportPath);
+  const resolved = result ?? reportFromDisk;
+  const status: ValidatorStatus =
+    resolved === null ? "error" : resolved.pass ? "pass" : "fail";
+  let summary: string | null = resolved ? summarizeArchitectureReport(resolved) : null;
+
+  if (!summary && error) {
+    summary = error;
+  }
+  if (!summary && status === "error") {
+    summary = "Architecture validator returned no result (see validator log).";
+  }
+
+  const exists = resolved !== null || (await fse.pathExists(reportPath));
+  return {
+    status,
+    summary,
+    reportPath: exists ? reportPath : null,
+  };
+}
+
 async function runDoctorValidatorWithReport(args: {
   projectName: string;
   repoPath: string;
@@ -3202,6 +3323,17 @@ function summarizeStyleReport(report: StyleValidationReport): string {
   const parts = [report.summary];
   if (report.concerns.length > 0) {
     parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  return parts.filter(Boolean).join(" | ");
+}
+
+function summarizeArchitectureReport(report: ArchitectureValidationReport): string {
+  const parts = [report.summary];
+  if (report.concerns.length > 0) {
+    parts.push(`Concerns: ${report.concerns.length}`);
+  }
+  if (report.recommendations.length > 0) {
+    parts.push(`Recs: ${report.recommendations.length}`);
   }
   return parts.filter(Boolean).join(" | ");
 }

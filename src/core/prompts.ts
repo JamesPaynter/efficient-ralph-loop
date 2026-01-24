@@ -13,6 +13,7 @@ export type PromptTemplateName =
   | "planner"
   | "test-validator"
   | "style-validator"
+  | "architecture-validator"
   | "doctor-validator";
 
 export type PromptTemplateValues = Record<string, string>;
