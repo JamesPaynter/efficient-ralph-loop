@@ -66,15 +66,42 @@ export function createGardenView({ appState, actions, fetchApi }) {
     },
   ];
 
-  const SLOT_LAYOUT = {
-    columnCount: 5,
-    xMin: 22,
-    xMax: 86,
-    yStart: 48,
-    rowGap: 8,
+  const ACTIVE_TASK_STATUSES = new Set(["running", "needs_review", "needs_rescope"]);
+  const MAX_VISIBLE_AGENTS = 20;
+  const MAX_WORKSTATION_SLOTS = 4;
+  const WORKSTATION_SLOT_POSITIONS = {
+    worker: [
+      { xPct: 38, yPct: 30 },
+      { xPct: 46, yPct: 32 },
+      { xPct: 54, yPct: 32 },
+      { xPct: 62, yPct: 30 },
+    ],
+    researcher: [
+      { xPct: 17, yPct: 50 },
+      { xPct: 25, yPct: 52 },
+      { xPct: 33, yPct: 50 },
+      { xPct: 25, yPct: 58 },
+    ],
+    coder: [
+      { xPct: 67, yPct: 50 },
+      { xPct: 75, yPct: 52 },
+      { xPct: 83, yPct: 50 },
+      { xPct: 75, yPct: 58 },
+    ],
+    reviewer: [
+      { xPct: 22, yPct: 64 },
+      { xPct: 30, yPct: 62 },
+      { xPct: 38, yPct: 64 },
+      { xPct: 30, yPct: 56 },
+    ],
+    artist: [
+      { xPct: 62, yPct: 64 },
+      { xPct: 70, yPct: 62 },
+      { xPct: 78, yPct: 64 },
+      { xPct: 70, yPct: 56 },
+    ],
   };
 
-  const INITIAL_SLOT_COUNT = 12;
   const SPAWN_ANIMATION_MS = 220;
   const DESPAWN_ANIMATION_MS = 240;
   const EVENTS_POLL_INTERVAL_MS = 2000;
@@ -86,14 +113,17 @@ export function createGardenView({ appState, actions, fetchApi }) {
   const THREAD_CURVE_RANGE = { min: 18, max: 42 };
   const THREAD_TENSION_RANGE = { min: 0.3, max: 0.55 };
   const THREAD_DRIFT_RANGE = { min: -0.08, max: 0.08 };
-  const slotColumnPositions = buildSlotColumnPositions();
 
   const viewState = {
     isActive: true,
     latestSummary: null,
-    gardenSlots: buildInitialSlots(INITIAL_SLOT_COUNT),
-    slotByTaskId: new Map(),
-    taskIdBySlot: new Map(),
+    normalizedTasks: [],
+    normalizedTaskById: new Map(),
+    firstSeenAtByTaskId: new Map(),
+    workstationElementsById: new Map(),
+    workstationTaskIdsById: new Map(),
+    slotAssignmentsByStation: new Map(),
+    taskIdByStationSlot: new Map(),
     shell: null,
     stage: null,
     garden: null,
@@ -159,7 +189,11 @@ export function createGardenView({ appState, actions, fetchApi }) {
   function reset() {
     viewState.latestSummary = null;
     viewState.lastSelectedTaskId = null;
-    resetSlotAllocator();
+    viewState.normalizedTasks = [];
+    viewState.normalizedTaskById.clear();
+    viewState.firstSeenAtByTaskId.clear();
+    viewState.workstationTaskIdsById.clear();
+    resetWorkstationSlots();
     clearPendingMushroomTimers();
     clearEventTracking();
     clearMushrooms();
@@ -256,15 +290,24 @@ export function createGardenView({ appState, actions, fetchApi }) {
 
     ensureGardenFrame();
 
-    const runningTasks = getRunningTasks(summary);
+    const normalizedTasks = normalizeTaskSnapshots(summary);
+    viewState.normalizedTasks = normalizedTasks;
+    viewState.normalizedTaskById = buildNormalizedTaskMap(normalizedTasks);
+
+    const runningTasks = getRunningTasks(normalizedTasks);
+    const activeTasks = normalizedTasks.filter((task) => isTaskActiveStatus(task.status));
+    const tasksByStation = mapTasksToWorkstations(activeTasks);
+    const visibleTaskIds = selectVisibleTaskIds(activeTasks);
     const taskCounts = summary?.taskCounts ?? {};
     const emptyTitle = options.emptyTitle ?? "No running tasks yet.";
     const emptyCopy = options.emptyCopy ?? "Mushrooms appear as tasks move into running.";
 
     updateLandmarkCounts(taskCounts);
     updateEmptyState(emptyTitle, emptyCopy, runningTasks.length === 0);
-    syncSlotAssignments(runningTasks);
-    syncMushrooms(runningTasks);
+    syncWorkstationSlots(tasksByStation);
+    const slottedVisibleTasks = buildSlottedVisibleTasks(tasksByStation, visibleTaskIds);
+    syncWorkstationIndicators(tasksByStation, visibleTaskIds);
+    syncMushrooms(slottedVisibleTasks);
     scheduleMyceliumOverlayUpdate();
     syncRunningTaskEventTracking(runningTasks);
     syncInspectorSelection(summary);
@@ -309,7 +352,8 @@ export function createGardenView({ appState, actions, fetchApi }) {
     const { emptyState, emptyTitleEl, emptyCopyEl } = createEmptyStateElements();
     bed.appendChild(emptyState);
 
-    const { diorama, groundLayer, workstationsLayer, agentsLayer } = createDioramaElements();
+    const { diorama, groundLayer, workstationsLayer, agentsLayer, workstationElementsById } =
+      createDioramaElements();
     bed.appendChild(diorama);
 
     garden.append(overlay, landmarks, bed);
@@ -330,6 +374,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.groundLayer = groundLayer;
     viewState.workstationsLayer = workstationsLayer;
     viewState.agentsLayer = agentsLayer;
+    viewState.workstationElementsById = workstationElementsById;
     viewState.myceliumOverlay = overlay;
     viewState.myceliumThreads = threads;
     viewState.myceliumKnotGlow = knotGlow;
@@ -380,8 +425,11 @@ export function createGardenView({ appState, actions, fetchApi }) {
     const workstationsLayer = document.createElement("div");
     workstationsLayer.className = "garden-workstations-layer";
 
+    const workstationElementsById = new Map();
     for (const definition of WORKSTATION_DEFINITIONS) {
-      workstationsLayer.appendChild(createWorkstation(definition));
+      const stationElements = createWorkstation(definition);
+      workstationElementsById.set(definition.id, stationElements);
+      workstationsLayer.appendChild(stationElements.element);
     }
 
     const agentsLayer = document.createElement("div");
@@ -394,6 +442,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
       groundLayer,
       workstationsLayer,
       agentsLayer,
+      workstationElementsById,
     };
   }
 
@@ -466,7 +515,13 @@ export function createGardenView({ appState, actions, fetchApi }) {
     overflowWrap.append(overflowPile, overflowLabel);
 
     station.append(node, overflowWrap);
-    return station;
+    return {
+      element: station,
+      badge,
+      indicator,
+      overflowWrap,
+      overflowLabel,
+    };
   }
 
   function updateLandmarkCounts(taskCounts) {
@@ -519,53 +574,310 @@ export function createGardenView({ appState, actions, fetchApi }) {
 
 
   // =============================================================================
-  // SLOT ALLOCATION
+  // TASK NORMALIZATION
   // =============================================================================
 
-  function resetSlotAllocator() {
-    viewState.gardenSlots = buildInitialSlots(INITIAL_SLOT_COUNT);
-    viewState.slotByTaskId.clear();
-    viewState.taskIdBySlot.clear();
+  function normalizeTaskSnapshots(summary) {
+    if (!summary?.tasks?.length) {
+      return [];
+    }
+
+    return summary.tasks.map((task) => normalizeTaskSnapshot(task));
   }
 
-  function syncSlotAssignments(runningTasks) {
-    const runningTaskIds = new Set(runningTasks.map((task) => String(task.id)));
+  function normalizeTaskSnapshot(task) {
+    const id = task?.id !== undefined && task?.id !== null ? String(task.id) : "";
+    const status = task?.status ? String(task.status).toLowerCase() : "";
+    const role = task?.role ? String(task.role).toLowerCase() : null;
+    const tokensUsed = normalizeMetricValue(task?.tokensUsed);
+    const cost = normalizeMetricValue(task?.cost);
+    const startedAt = resolveTaskStartedAt(id, task?.startedAt);
+    const name = task?.name ? String(task.name) : null;
 
-    for (const [taskId, slotIndex] of viewState.slotByTaskId.entries()) {
-      if (!runningTaskIds.has(taskId)) {
-        viewState.slotByTaskId.delete(taskId);
-        viewState.taskIdBySlot.delete(slotIndex);
+    return {
+      id,
+      status,
+      role,
+      tokensUsed,
+      cost,
+      startedAt,
+      name,
+    };
+  }
+
+  function resolveTaskStartedAt(taskId, startedAt) {
+    const parsed = parseTimestamp(startedAt);
+    if (parsed !== null) {
+      return parsed;
+    }
+
+    if (!viewState.firstSeenAtByTaskId.has(taskId)) {
+      viewState.firstSeenAtByTaskId.set(taskId, Date.now());
+    }
+
+    return viewState.firstSeenAtByTaskId.get(taskId);
+  }
+
+  function normalizeMetricValue(value) {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function buildNormalizedTaskMap(tasks) {
+    const taskMap = new Map();
+    for (const task of tasks) {
+      taskMap.set(task.id, task);
+    }
+    return taskMap;
+  }
+
+  function getNormalizedTaskForId(taskId) {
+    const normalizedId = String(taskId);
+    const cached = viewState.normalizedTaskById.get(normalizedId);
+    if (cached) {
+      return cached;
+    }
+
+    const rawTask = findTaskById(viewState.latestSummary, normalizedId);
+    if (rawTask) {
+      return normalizeTaskSnapshot(rawTask);
+    }
+
+    return {
+      id: normalizedId,
+      status: "running",
+      role: null,
+      tokensUsed: 0,
+      cost: 0,
+      startedAt: resolveTaskStartedAt(normalizedId, null),
+      name: null,
+    };
+  }
+
+  function isTaskActiveStatus(status) {
+    return ACTIVE_TASK_STATUSES.has(status);
+  }
+
+
+  // =============================================================================
+  // WORKSTATION MAPPING
+  // =============================================================================
+
+  function mapTaskToWorkstation(task) {
+    if (task.status === "needs_review") {
+      return "reviewer";
+    }
+    if (task.status === "needs_rescope") {
+      return "researcher";
+    }
+    if (task.status !== "running") {
+      return null;
+    }
+
+    if (task.role === "researcher") {
+      return "researcher";
+    }
+    if (task.role === "coder") {
+      return "coder";
+    }
+    if (task.role === "reviewer") {
+      return "reviewer";
+    }
+    if (task.role === "artist") {
+      return "artist";
+    }
+    if (task.role === "worker") {
+      return "worker";
+    }
+
+    return "worker";
+  }
+
+  function mapTasksToWorkstations(tasks) {
+    const tasksByStation = new Map();
+    for (const task of tasks) {
+      const stationId = mapTaskToWorkstation(task);
+      if (!stationId) {
+        continue;
+      }
+      const stationTasks = tasksByStation.get(stationId);
+      if (stationTasks) {
+        stationTasks.push(task);
+      } else {
+        tasksByStation.set(stationId, [task]);
       }
     }
 
-    ensureSlotCapacity(runningTaskIds.size);
+    return tasksByStation;
+  }
 
-    for (const task of runningTasks) {
-      const taskId = String(task.id);
-      if (viewState.slotByTaskId.has(taskId)) {
+  function selectVisibleTaskIds(tasks) {
+    const sorted = [...tasks].sort(compareVisibilityPriority);
+    const visible = sorted.slice(0, MAX_VISIBLE_AGENTS);
+    return new Set(visible.map((task) => task.id));
+  }
+
+  function compareVisibilityPriority(first, second) {
+    if (first.tokensUsed !== second.tokensUsed) {
+      return second.tokensUsed - first.tokensUsed;
+    }
+    if (first.cost !== second.cost) {
+      return second.cost - first.cost;
+    }
+    if (first.startedAt !== second.startedAt) {
+      return first.startedAt - second.startedAt;
+    }
+
+    return String(first.id).localeCompare(String(second.id));
+  }
+
+
+  // =============================================================================
+  // WORKSTATION STATE
+  // =============================================================================
+
+  function syncWorkstationIndicators(tasksByStation, visibleTaskIds) {
+    if (!viewState.workstationElementsById) {
+      return;
+    }
+
+    for (const definition of WORKSTATION_DEFINITIONS) {
+      const stationId = definition.id;
+      const stationTasks = tasksByStation.get(stationId) ?? [];
+      const taskIds = stationTasks.map((task) => task.id);
+      viewState.workstationTaskIdsById.set(stationId, taskIds);
+
+      const elements = viewState.workstationElementsById.get(stationId);
+      if (!elements) {
         continue;
       }
 
-      const slotIndex = findFirstAvailableSlot();
-      if (slotIndex === null) {
+      const totalMappedCount = stationTasks.length;
+      const hasActiveTasks = stationTasks.some((task) => isTaskActiveStatus(task.status));
+      const slotByTaskId = viewState.slotAssignmentsByStation.get(stationId);
+
+      let slottedVisibleCount = 0;
+      if (slotByTaskId) {
+        for (const task of stationTasks) {
+          if (!visibleTaskIds.has(task.id)) {
+            continue;
+          }
+          if (slotByTaskId.has(task.id)) {
+            slottedVisibleCount += 1;
+          }
+        }
+      }
+
+      const overflowCount = Math.max(0, totalMappedCount - slottedVisibleCount);
+      elements.badge.textContent = formatCount(totalMappedCount);
+      elements.indicator.hidden = !hasActiveTasks;
+      elements.overflowWrap.hidden = overflowCount === 0;
+      elements.overflowLabel.textContent = `+${overflowCount}`;
+    }
+  }
+
+
+  // =============================================================================
+  // WORKSTATION SLOTS
+  // =============================================================================
+
+  function resetWorkstationSlots() {
+    viewState.slotAssignmentsByStation.clear();
+    viewState.taskIdByStationSlot.clear();
+  }
+
+  function syncWorkstationSlots(tasksByStation) {
+    for (const { id: stationId } of WORKSTATION_DEFINITIONS) {
+      const stationTasks = tasksByStation.get(stationId) ?? [];
+      const slotByTaskId = getStationSlotAssignments(stationId);
+      const taskIdBySlot = getStationSlotOccupancy(stationId);
+      const mappedTaskIds = new Set(stationTasks.map((task) => task.id));
+
+      for (const [taskId, slotIndex] of slotByTaskId.entries()) {
+        if (mappedTaskIds.has(taskId)) {
+          continue;
+        }
+        slotByTaskId.delete(taskId);
+        taskIdBySlot.delete(slotIndex);
+      }
+
+      const unassignedTasks = stationTasks
+        .filter((task) => !slotByTaskId.has(task.id))
+        .sort(compareSlotAssignmentOrder);
+
+      for (const task of unassignedTasks) {
+        const slotIndex = findFirstAvailableStationSlot(taskIdBySlot);
+        if (slotIndex === null) {
+          break;
+        }
+        slotByTaskId.set(task.id, slotIndex);
+        taskIdBySlot.set(slotIndex, task.id);
+      }
+    }
+  }
+
+  function buildSlottedVisibleTasks(tasksByStation, visibleTaskIds) {
+    const slottedTasks = [];
+    for (const { id: stationId } of WORKSTATION_DEFINITIONS) {
+      const stationTasks = tasksByStation.get(stationId) ?? [];
+      const slotByTaskId = viewState.slotAssignmentsByStation.get(stationId);
+      if (!slotByTaskId) {
         continue;
       }
 
-      viewState.slotByTaskId.set(taskId, slotIndex);
-      viewState.taskIdBySlot.set(slotIndex, taskId);
+      for (const task of stationTasks) {
+        if (!visibleTaskIds.has(task.id)) {
+          continue;
+        }
+        const slotIndex = slotByTaskId.get(task.id);
+        if (slotIndex === undefined || slotIndex === null) {
+          continue;
+        }
+        const slotPoint = WORKSTATION_SLOT_POSITIONS[stationId]?.[slotIndex];
+        if (!slotPoint) {
+          continue;
+        }
+        slottedTasks.push({
+          task,
+          stationId,
+          slotIndex,
+          slotPoint,
+        });
+      }
     }
+
+    return slottedTasks;
   }
 
-  function ensureSlotCapacity(requiredCount) {
-    while (viewState.gardenSlots.length < requiredCount) {
-      const slotIndex = viewState.gardenSlots.length;
-      viewState.gardenSlots.push(buildSlotForIndex(slotIndex));
+  function getStationSlotAssignments(stationId) {
+    const existing = viewState.slotAssignmentsByStation.get(stationId);
+    if (existing) {
+      return existing;
     }
+
+    const slotByTaskId = new Map();
+    viewState.slotAssignmentsByStation.set(stationId, slotByTaskId);
+    return slotByTaskId;
   }
 
-  function findFirstAvailableSlot() {
-    for (let slotIndex = 0; slotIndex < viewState.gardenSlots.length; slotIndex += 1) {
-      if (!viewState.taskIdBySlot.has(slotIndex)) {
+  function getStationSlotOccupancy(stationId) {
+    const existing = viewState.taskIdByStationSlot.get(stationId);
+    if (existing) {
+      return existing;
+    }
+
+    const taskIdBySlot = new Map();
+    viewState.taskIdByStationSlot.set(stationId, taskIdBySlot);
+    return taskIdBySlot;
+  }
+
+  function findFirstAvailableStationSlot(taskIdBySlot) {
+    for (let slotIndex = 0; slotIndex < MAX_WORKSTATION_SLOTS; slotIndex += 1) {
+      if (!taskIdBySlot.has(slotIndex)) {
         return slotIndex;
       }
     }
@@ -573,39 +885,12 @@ export function createGardenView({ appState, actions, fetchApi }) {
     return null;
   }
 
-  function buildInitialSlots(count) {
-    const slots = [];
-    for (let slotIndex = 0; slotIndex < count; slotIndex += 1) {
-      slots.push(buildSlotForIndex(slotIndex));
-    }
-    return slots;
-  }
-
-  function buildSlotForIndex(slotIndex) {
-    const columnIndex = slotIndex % SLOT_LAYOUT.columnCount;
-    const rowIndex = Math.floor(slotIndex / SLOT_LAYOUT.columnCount);
-    const xPct = slotColumnPositions[columnIndex] ?? 50;
-    const yPct = roundToTenth(SLOT_LAYOUT.yStart + rowIndex * SLOT_LAYOUT.rowGap);
-
-    return { xPct, yPct };
-  }
-
-  function buildSlotColumnPositions() {
-    if (SLOT_LAYOUT.columnCount <= 1) {
-      return [roundToTenth((SLOT_LAYOUT.xMin + SLOT_LAYOUT.xMax) / 2)];
+  function compareSlotAssignmentOrder(first, second) {
+    if (first.startedAt !== second.startedAt) {
+      return first.startedAt - second.startedAt;
     }
 
-    const step = (SLOT_LAYOUT.xMax - SLOT_LAYOUT.xMin) / (SLOT_LAYOUT.columnCount - 1);
-    const positions = [];
-    for (let index = 0; index < SLOT_LAYOUT.columnCount; index += 1) {
-      positions.push(roundToTenth(SLOT_LAYOUT.xMin + step * index));
-    }
-
-    return positions;
-  }
-
-  function roundToTenth(value) {
-    return Math.round(value * 10) / 10;
+    return String(first.id).localeCompare(String(second.id));
   }
 
 
@@ -613,51 +898,53 @@ export function createGardenView({ appState, actions, fetchApi }) {
   // MUSHROOMS
   // =============================================================================
 
-  function syncMushrooms(runningTasks) {
-    if (!viewState.bed) {
+  function syncMushrooms(slottedVisibleTasks) {
+    const mount = viewState.agentsLayer ?? viewState.bed;
+    if (!mount) {
       return;
     }
 
-    const runningTaskIds = new Set(runningTasks.map((task) => String(task.id)));
+    const visibleTaskIds = new Set(slottedVisibleTasks.map((entry) => entry.task.id));
 
     for (const [taskId, mushroom] of viewState.mushroomByTaskId.entries()) {
-      if (!runningTaskIds.has(taskId)) {
+      if (!visibleTaskIds.has(taskId)) {
         startDespawn(taskId, mushroom);
       }
     }
 
-    for (const task of runningTasks) {
-      const taskId = String(task.id);
+    for (const entry of slottedVisibleTasks) {
+      const { task, slotPoint } = entry;
+      const taskId = task.id;
       const mushroom = viewState.mushroomByTaskId.get(taskId);
-      const slotIndex = viewState.slotByTaskId.get(taskId);
 
       if (mushroom) {
         cancelDespawn(taskId, mushroom);
-        applySlotPosition(mushroom, slotIndex);
+        applySlotPosition(mushroom, slotPoint);
         updateMushroomSelection(mushroom, taskId);
-        updateMushroomActivity(mushroom, taskId);
+        updateMushroomStatus(mushroom, task);
+        updateMushroomActivity(mushroom, task);
         continue;
       }
 
-      const newMushroom = createMushroom(task, slotIndex);
+      const newMushroom = createMushroom(task, slotPoint);
       viewState.mushroomByTaskId.set(taskId, newMushroom);
-      viewState.bed.appendChild(newMushroom);
-      updateMushroomActivity(newMushroom, taskId);
+      mount.appendChild(newMushroom);
+      updateMushroomActivity(newMushroom, task);
       triggerSpawn(taskId, newMushroom);
     }
   }
 
-  function createMushroom(task, slotIndex) {
-    const taskId = String(task.id);
+  function createMushroom(task, slotPoint) {
+    const taskId = task.id;
     const mushroom = document.createElement("button");
     mushroom.type = "button";
-    mushroom.className = "mushroom is-running";
+    mushroom.className = "mushroom";
     mushroom.dataset.taskId = taskId;
-    mushroom.title = `Task ${taskId} is running`;
-    mushroom.setAttribute("aria-label", `Select task ${taskId}`);
+    mushroom.setAttribute("aria-label", `Select task ${task.name || taskId}`);
 
-    applySlotPosition(mushroom, slotIndex);
+    applySlotPosition(mushroom, slotPoint);
     updateMushroomSelection(mushroom, taskId);
+    updateMushroomStatus(mushroom, task);
 
     mushroom.addEventListener("click", () => {
       actions.setSelectedTask(taskId);
@@ -666,7 +953,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     });
 
     const float = document.createElement("div");
-    float.className = "mushroom-float bob";
+    float.className = "mushroom-float";
 
     const body = document.createElement("div");
     body.className = "mushroom-body";
@@ -685,7 +972,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
 
     const label = document.createElement("div");
     label.className = "mushroom-label";
-    label.textContent = taskId;
+    label.textContent = task.name || taskId;
 
     float.append(body, label);
     mushroom.appendChild(float);
@@ -693,19 +980,13 @@ export function createGardenView({ appState, actions, fetchApi }) {
     return mushroom;
   }
 
-  function applySlotPosition(mushroom, slotIndex) {
-    if (slotIndex === undefined || slotIndex === null) {
+  function applySlotPosition(mushroom, slotPoint) {
+    if (!slotPoint) {
       return;
     }
 
-    const slot = viewState.gardenSlots[slotIndex];
-    if (!slot) {
-      return;
-    }
-
-    mushroom.style.setProperty("--slot-x", `${slot.xPct}%`);
-    mushroom.style.setProperty("--slot-y", `${slot.yPct}%`);
-    mushroom.style.setProperty("--bob-delay", `${(slotIndex % 6) * 0.12}s`);
+    mushroom.style.setProperty("--slot-x", `${slotPoint.xPct}%`);
+    mushroom.style.setProperty("--slot-y", `${slotPoint.yPct}%`);
   }
 
   function updateMushroomSelection(mushroom, taskId) {
@@ -767,7 +1048,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
   }
 
   function clearMushrooms() {
-    if (!viewState.bed) {
+    if (!viewState.bed && !viewState.agentsLayer) {
       viewState.mushroomByTaskId.clear();
       return;
     }
@@ -798,16 +1079,59 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.pulseUntilByTaskId.clear();
   }
 
-  function updateMushroomActivity(mushroom, taskId) {
+  function updateMushroomStatus(mushroom, task) {
+    const status = task.status || "";
+    mushroom.dataset.status = status;
+    mushroom.classList.toggle("is-running", status === "running");
+    mushroom.classList.toggle("is-needs-review", status === "needs_review");
+    mushroom.classList.toggle("is-needs-rescope", status === "needs_rescope");
+  }
+
+  function updateMushroomActivity(mushroom, task) {
     const ribbon = mushroom.querySelector(".mushroom-ribbon");
     if (!ribbon) {
       return;
     }
 
-    const eventType = viewState.lastEventTypeByTaskId.get(taskId);
-    const activityLabel = classifyActivityLabel(eventType);
+    const activityLabel = resolveMushroomRibbonLabel(task);
     ribbon.textContent = activityLabel;
-    mushroom.title = `Task ${taskId} is running • ${activityLabel}`;
+    mushroom.title = buildMushroomTitle(task);
+  }
+
+  function resolveMushroomRibbonLabel(task) {
+    if (task.status === "needs_review") {
+      return "REVIEW";
+    }
+    if (task.status === "needs_rescope") {
+      return "RESCOPE";
+    }
+
+    const eventType = viewState.lastEventTypeByTaskId.get(task.id);
+    return classifyActivityLabel(eventType);
+  }
+
+  function buildMushroomTitle(task) {
+    const name = task.name || task.id;
+    const statusLabel = formatTaskStatus(task.status);
+    const tokensUsed = formatMetric(task.tokensUsed);
+    const cost = formatMetric(task.cost);
+    return `${name} | ${statusLabel} | tokens ${tokensUsed} | cost ${cost}`;
+  }
+
+  function formatTaskStatus(status) {
+    if (!status) {
+      return "unknown";
+    }
+
+    return String(status).replace(/_/g, " ");
+  }
+
+  function formatMetric(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      return "--";
+    }
+
+    return String(value);
   }
 
   function triggerPulse(taskId, mushroom) {
@@ -951,7 +1275,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
       return;
     }
 
-    const runningTasks = getRunningTasks(viewState.latestSummary);
+    const runningTasks = getRunningTasks(viewState.normalizedTasks);
     if (runningTasks.length === 0) {
       return;
     }
@@ -992,7 +1316,10 @@ export function createGardenView({ appState, actions, fetchApi }) {
       return;
     }
 
-    updateMushroomActivity(mushroom, taskId);
+    const task = getNormalizedTaskForId(taskId);
+    if (task) {
+      updateMushroomActivity(mushroom, task);
+    }
     triggerPulse(taskId, mushroom);
   }
 
@@ -1084,7 +1411,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     const knotPoint = resolveKnotPoint(gardenRect);
     updateMyceliumKnot(knotPoint, gardenRect);
 
-    const runningTasks = getRunningTasks(viewState.latestSummary);
+    const runningTasks = getRunningTasks(viewState.normalizedTasks);
     updateMyceliumThreads(runningTasks, gardenRect, knotPoint);
   }
 
@@ -1299,12 +1626,12 @@ export function createGardenView({ appState, actions, fetchApi }) {
   // UTILITIES
   // =============================================================================
 
-  function getRunningTasks(summary) {
-    if (!summary?.tasks?.length) {
+  function getRunningTasks(tasks) {
+    if (!Array.isArray(tasks) || tasks.length === 0) {
       return [];
     }
 
-    return summary.tasks
+    return tasks
       .filter((task) => task.status === "running")
       .sort((first, second) => String(first.id).localeCompare(String(second.id)));
   }
