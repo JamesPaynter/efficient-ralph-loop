@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     make \
     curl \
     jq \
+    ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.json ./
@@ -43,10 +44,12 @@ RUN apt-get update && apt-get install -y \
     make \
     curl \
     jq \
+    ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Codex CLI for ad-hoc debugging and manual runs
 RUN npm install -g @openai/codex
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
