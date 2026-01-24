@@ -318,6 +318,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     inspector: null,
     isInspectorOpen: false,
     lastSelectedTaskId: null,
+    selectedWorkstationId: null,
     landmarkCountEls: new Map(),
     failureMarkerTimeoutsByStation: new Map(),
     mushroomByTaskId: new Map(),
@@ -361,6 +362,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
   function reset() {
     viewState.latestSummary = null;
     viewState.lastSelectedTaskId = null;
+    setSelectedWorkstation(null);
     viewState.normalizedTasks = [];
     viewState.normalizedTaskById.clear();
     viewState.prevSnapshotById.clear();
@@ -512,6 +514,8 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.visibleTaskIds = visibleTaskIds;
     viewState.lastEmptyStateKey = emptyStateKey;
 
+    syncSelectedMushroomVisibility(visibleTaskIds, diff.nextById);
+
     const tasksByStation = mapTasksToWorkstations(activeTasks);
     const slotCandidatesByStation = mapTasksToWorkstations(candidates);
     const originSlotsByTaskId = reserveMoveOrigins(diff, previousSnapshotById);
@@ -590,6 +594,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     viewState.workstationsLayer = workstationsLayer;
     viewState.agentsLayer = agentsLayer;
     viewState.workstationElementsById = workstationElementsById;
+    syncWorkstationSelection();
     viewState.myceliumOverlay = overlay;
     viewState.myceliumThreads = threads;
     viewState.myceliumKnotGlow = knotGlow;
@@ -679,8 +684,15 @@ export function createGardenView({ appState, actions, fetchApi }) {
     station.style.setProperty("--overflow-x", `${overflow.xPct}%`);
     station.style.setProperty("--overflow-y", `${overflow.yPct}%`);
 
-    const node = document.createElement("div");
+    const node = document.createElement("button");
+    node.type = "button";
     node.className = "workstation-node";
+    node.setAttribute("aria-label", `Select ${label} workstation`);
+    node.setAttribute("aria-pressed", "false");
+    node.title = buildWorkstationTitle(label, 0);
+    node.addEventListener("click", () => {
+      handleWorkstationSelection(id);
+    });
 
     const prop = document.createElement("div");
     prop.className = "workstation-prop";
@@ -728,6 +740,9 @@ export function createGardenView({ appState, actions, fetchApi }) {
     overflowLabel.textContent = "+N";
 
     overflowWrap.append(overflowPile, overflowLabel);
+    overflowWrap.addEventListener("click", () => {
+      handleWorkstationSelection(id);
+    });
 
     const failureMarker = document.createElement("div");
     failureMarker.className = "workstation-failure-marker";
@@ -736,6 +751,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
     station.append(node, overflowWrap, failureMarker);
     return {
       element: station,
+      button: node,
       badge,
       indicator,
       overflowWrap,
@@ -1053,6 +1069,9 @@ export function createGardenView({ appState, actions, fetchApi }) {
       elements.indicator.hidden = !hasActiveTasks;
       elements.overflowWrap.hidden = overflowCount === 0;
       elements.overflowLabel.textContent = `+${overflowCount}`;
+      if (elements.button) {
+        elements.button.title = buildWorkstationTitle(definition.label, totalMappedCount);
+      }
     }
   }
 
@@ -1087,6 +1106,119 @@ export function createGardenView({ appState, actions, fetchApi }) {
         elements.failureMarker.classList.remove("is-active");
       }
     }
+  }
+
+
+  // =============================================================================
+  // WORKSTATION INTERACTIONS
+  // =============================================================================
+
+  function handleWorkstationSelection(stationId) {
+    const normalizedStationId = stationId ? String(stationId) : null;
+    if (!normalizedStationId) {
+      return;
+    }
+
+    setSelectedWorkstation(normalizedStationId);
+
+    const taskIds = resolveWorkstationTaskIds(normalizedStationId);
+    dispatchWorkstationSelectionEvent(normalizedStationId, taskIds);
+
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    const representativeTaskId = resolveRepresentativeTaskId(taskIds);
+    if (!representativeTaskId) {
+      return;
+    }
+
+    actions.setSelectedTask(representativeTaskId);
+    updateSelectedMushroom(representativeTaskId);
+    openInspectorForTask(representativeTaskId);
+  }
+
+  function setSelectedWorkstation(stationId) {
+    const normalizedStationId = stationId ? String(stationId) : null;
+    viewState.selectedWorkstationId = normalizedStationId;
+    syncWorkstationSelection();
+  }
+
+  function syncWorkstationSelection() {
+    if (!viewState.workstationElementsById) {
+      return;
+    }
+
+    for (const [stationId, elements] of viewState.workstationElementsById.entries()) {
+      const isSelected = stationId === viewState.selectedWorkstationId;
+      elements.element.classList.toggle("is-selected", isSelected);
+      if (elements.button) {
+        elements.button.setAttribute("aria-pressed", String(isSelected));
+      }
+    }
+  }
+
+  function dispatchWorkstationSelectionEvent(workstationId, taskIds) {
+    if (!container) {
+      return;
+    }
+
+    container.dispatchEvent(
+      new CustomEvent("garden:selectWorkstation", {
+        detail: {
+          workstationId,
+          taskIds,
+        },
+        bubbles: true,
+      }),
+    );
+  }
+
+  function resolveWorkstationTaskIds(stationId) {
+    const taskIds = viewState.workstationTaskIdsById.get(stationId);
+    if (Array.isArray(taskIds)) {
+      return [...taskIds];
+    }
+
+    if (!Array.isArray(viewState.normalizedTasks)) {
+      return [];
+    }
+
+    const tasksByStation = mapTasksToWorkstations(viewState.normalizedTasks);
+    return (tasksByStation.get(stationId) ?? []).map((task) => task.id);
+  }
+
+  function resolveRepresentativeTaskId(taskIds) {
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      return null;
+    }
+
+    let selectedTaskId = null;
+    let selectedActivityAt = -Infinity;
+
+    for (const taskId of taskIds) {
+      const normalizedTaskId = String(taskId);
+      const task = viewState.normalizedTaskById.get(normalizedTaskId);
+      const lastEventAt = viewState.lastEventAtByTaskId.get(normalizedTaskId) ?? null;
+      const activityAt = lastEventAt ?? task?.startedAt ?? 0;
+
+      if (
+        selectedTaskId === null ||
+        activityAt > selectedActivityAt ||
+        (activityAt === selectedActivityAt &&
+          normalizedTaskId.localeCompare(selectedTaskId) > 0)
+      ) {
+        selectedTaskId = normalizedTaskId;
+        selectedActivityAt = activityAt;
+      }
+    }
+
+    return selectedTaskId;
+  }
+
+  function buildWorkstationTitle(label, mappedCount) {
+    const countLabel = mappedCount === 1 ? "1 task" : `${mappedCount} tasks`;
+    return `${label} | ${countLabel}`;
   }
 
 
@@ -1697,6 +1829,19 @@ export function createGardenView({ appState, actions, fetchApi }) {
   // =============================================================================
   // MUSHROOMS
   // =============================================================================
+
+  function syncSelectedMushroomVisibility(visibleTaskIds, tasksById) {
+    const selectedTaskId = appState.selectedTaskId;
+    if (!selectedTaskId) {
+      updateSelectedMushroom(null);
+      return;
+    }
+
+    const normalizedTaskId = String(selectedTaskId);
+    if (!tasksById.has(normalizedTaskId) || !visibleTaskIds.has(normalizedTaskId)) {
+      updateSelectedMushroom(null);
+    }
+  }
 
   function syncMushrooms(slottedVisibleTasks) {
     const mount = viewState.agentsLayer ?? viewState.bed;
