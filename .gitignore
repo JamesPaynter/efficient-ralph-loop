@@ -1,24 +1,35 @@
-node_modules/
-dist/
-.DS_Store
-.pnpm-store/
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.pnpm-store
 pnpm-lock.yaml
+dist
+dist-electron
+dist-ssr
+release
+*.local
 
-# Orchestrator runtime data
-.state/
-logs/
-workspaces/
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# Project/task artifacts
-.tasks/
-
-# Mycelium local artifacts
-.mycelium/
-
-# Local scratch
-old.TODO.md
-GPT-PRO-notes/
-
-# Env
+# Environment variables
 .env
-.mycelium/
+.env.*
+.mycelium/**
+!.mycelium/doctor.sh
+!.mycelium/config.yaml

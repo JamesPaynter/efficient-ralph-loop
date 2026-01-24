@@ -1,0 +1,80 @@
+# Mycelium project configuration (repo-scoped)
+#
+# This file is loaded by default from <repo>/.mycelium/config.yaml.
+# You can also keep configs in ~/.mycelium/projects/<project>.yaml.
+
+# Path to the target repo on your machine (env vars like ${HOME} are allowed).
+# Relative paths are resolved from the directory containing this YAML file.
+repo_path: ..
+
+# Integration branch the orchestrator merges into
+main_branch: main
+
+# Task branches are created as: <task_branch_prefix><id>-<name>
+task_branch_prefix: agent/
+
+# Where Mycelium stores planned task specs + manifests within the target repo
+tasks_dir: .mycelium/tasks
+
+# Where Mycelium stores planning artifacts (implementation plan, sessions, etc.)
+planning_dir: .mycelium/planning
+
+# Manifest enforcement policy: off | warn | block
+manifest_enforcement: warn
+
+# Limits
+max_parallel: 4
+max_retries: 20
+timeout_minutes: 240
+
+budgets:
+  mode: warn
+  # max_tokens_per_task: 200000
+  # max_cost_per_run: 25
+
+# Doctor command runs on the integration branch after each batch.
+doctor: ./.mycelium/doctor.sh
+# doctor_timeout: 900
+
+# Optional bootstrap commands executed inside each worker container before Codex runs.
+# Use npm to avoid creating pnpm lock/store files in the workspace (keeps context small).
+bootstrap:
+  - npm ci
+
+# Define abstract resources for safe scheduling. Start broad, tighten over time.
+resources:
+  - name: repo
+    description: All repo files (broad default)
+    paths:
+      - "**/*"
+
+planner:
+  provider: codex
+  model: o3
+
+worker:
+  model: gpt-5.2-codex
+  checkpoint_commits: true
+  reasoning_effort: xhigh
+
+# Optional validators. Set mode: block to prevent merges on failure.
+# test_validator:
+#   mode: warn
+#   provider: openai
+#   model: o3
+# doctor_validator:
+#   mode: warn
+#   provider: openai
+#   model: o3
+#   run_every_n_tasks: 10
+
+# Docker worker image (paths resolve relative to this file when not absolute)
+docker:
+  image: mycelium-worker:latest
+  dockerfile: /Users/james/Documents/repos/AGENTS-v3/mycelium-v5-FINAL/templates/Dockerfile
+  build_context: /Users/james/Documents/repos/AGENTS-v3/mycelium-v5-FINAL
+  user: worker
+  network_mode: bridge
+  # memory_mb: 2048
+  # cpu_quota: 100000
+  # pids_limit: 512
