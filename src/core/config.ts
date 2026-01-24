@@ -79,6 +79,7 @@ const WorkerSchema = z
     reasoning_effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     max_retries: z.number().int().positive().optional(),
     checkpoint_commits: z.boolean().default(true),
+    log_codex_prompts: z.boolean().default(false),
   })
   .strict();
 

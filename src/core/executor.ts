@@ -2553,6 +2553,7 @@ export async function runProject(
               CODEX_MODEL_REASONING_EFFORT: codexReasoningEffort,
               CODEX_HOME: codexHomeInContainer,
               RUN_LOGS_DIR: "/run-logs",
+              LOG_CODEX_PROMPTS: config.worker.log_codex_prompts ? "1" : "0",
             },
             binds: [
               { hostPath: workspace, containerPath: "/workspace", mode: "rw" },
@@ -2652,6 +2653,9 @@ export async function runProject(
         );
         const workerLogger = createLocalWorkerLogger(taskEvents, { taskId, taskSlug });
 
+        const previousLogCodexPrompts = process.env.LOG_CODEX_PROMPTS;
+        process.env.LOG_CODEX_PROMPTS = config.worker.log_codex_prompts ? "1" : "0";
+
         try {
           await runWorker(
             {
@@ -2697,6 +2701,11 @@ export async function runProject(
             success: false as const,
           };
         } finally {
+          if (previousLogCodexPrompts === undefined) {
+            delete process.env.LOG_CODEX_PROMPTS;
+          } else {
+            process.env.LOG_CODEX_PROMPTS = previousLogCodexPrompts;
+          }
           taskEvents.close();
         }
       }),
