@@ -1104,11 +1104,18 @@ function classifyFailure(
         },
       };
     }
-    case "doctor.canary.failed": {
-      const message = stringFrom(payload.reason) ?? "Doctor canary failed";
+    case "doctor.canary.unexpected_pass": {
+      const severity = stringFrom(payload.severity) ?? "warn";
+      if (severity === "warn" || severity === "warning") {
+        return null;
+      }
+      const message =
+        stringFrom(payload.message) ??
+        stringFrom(payload.reason) ??
+        "Doctor canary unexpected pass";
       return {
-        key: "doctor.canary.failed",
-        label: "Doctor canary failures",
+        key: "doctor.canary.unexpected_pass",
+        label: "Doctor canary unexpected passes",
         example: { ...baseExample, message },
       };
     }

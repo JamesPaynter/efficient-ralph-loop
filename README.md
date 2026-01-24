@@ -55,6 +55,7 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 - Control plane: `control_plane.enabled` derives component resources (`component_resource_prefix`), `resources_mode` selects how resources resolve (`prefer-derived`), `fallback_resource` handles unmapped files, `scope_mode` controls compliance enforcement (off/shadow/enforce), `lock_mode` selects declared/shadow/derived scheduling, `control_plane.checks.mode` (off/report/enforce) enables scoped doctor commands via `commands_by_component` with fallback to the global doctor, and `control_plane.surface_locks.enabled` adds `surface:<component>` locks for surface changes.
 - Manifest enforcement: `manifest_enforcement: off|warn|block`; violations emit `access.requested` and trigger auto-rescope when possible, unless `control_plane.scope_mode=shadow`.
 - Validators: `test_validator` and `doctor_validator` respect `enabled` + `mode` (`warn|block`); doctor validator cadence via `run_every_n_tasks` and also when integration doctor fails or the canary passes unexpectedly.
+- Doctor canary: configure `doctor_canary` (`mode: off|env`, `env_var`, `warn_on_unexpected_pass`) to control the integration doctor re-run and warning behavior.
 - Budgets: `budgets.mode warn|block` with `max_tokens_per_task` / `max_cost_per_run`; defaults warn.
 - Docker: `docker.image`, `dockerfile`, `build_context`, `user`, `network_mode`, `memory_mb`, `cpu_quota`, `pids_limit`; `--local-worker` skips Docker.
 - Layout: `.mycelium/tasks` + `.mycelium/planning` live in the target repo; logs/state default to `<repo>/.mycelium/{logs,state}`; workspaces live under `~/.mycelium/workspaces/<project>/run-<id>/task-<id>`.
@@ -63,10 +64,23 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 - Each task gets its own cloned workspace; manifests/specs are copied in before execution.
 - Signals: Ctrl+C/SIGTERM logs `run.stop`, persists state, and leaves task containers running for `resume` (use `--stop-containers-on-exit` on `run`/`resume`/`autopilot` to stop them).
 - Resume: run state is persisted after every mutation; `resume` reattaches to labeled containers when they still exist (streams historical logs), otherwise resets those tasks to pending; worker state restores Codex thread ids and checkpoint commits when available.
-- Doctors: per-task doctor runs each attempt; integration doctor runs after each batch; canary reruns doctor with `ORCH_CANARY=1` and feeds doctor validator when it passes unexpectedly.
+- Doctors: per-task doctor runs each attempt; integration doctor runs after each batch; canary reruns doctor with `doctor_canary.env_var=1` (default `ORCH_CANARY`) unless `doctor_canary.mode=off`.
 - Strict TDD: when `tdd_mode: "strict"` and `verify.fast` is set, Stage A requires failing tests first; Stage B implements until doctor passes; non-test changes in Stage A fail the attempt.
 - Manifest rescope: undeclared writes generate compliance reports and `task.rescope.*` events; successful rescope updates the manifest/locks and retries the task.
 - Log summaries: `logs summarize --task <id>` prints validator summaries; add `--llm` to use the configured LLM summaries when enabled.
+
+Example doctor wrapper (update the env var name if you customize `doctor_canary.env_var`):
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${ORCH_CANARY:-}" == "1" ]]; then
+  echo "ORCH_CANARY=1: failing as expected"
+  exit 1
+fi
+
+npm test
+```
 
 ## Limits and future work
 - No filesystem sandbox inside workers; manifest enforcement is post-task (warn/block) rather than live denial.

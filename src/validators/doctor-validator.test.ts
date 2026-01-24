@@ -100,7 +100,12 @@ describe("runDoctorValidator", () => {
       mainBranch: "main",
       doctorCommand: "npm test",
       trigger: "cadence",
-      doctorCanary: { status: "expected_fail", exitCode: 1, output: "canary failed" },
+      doctorCanary: {
+        status: "expected_fail",
+        exitCode: 1,
+        output: "canary failed",
+        envVar: "ORCH_CANARY",
+      },
       config: validatorConfig,
       orchestratorLog,
       llmClient: llm,
@@ -122,6 +127,7 @@ describe("runDoctorValidator", () => {
       status: "expected_fail",
       exitCode: 1,
       output: "canary failed",
+      envVar: "ORCH_CANARY",
     });
     const doctorRunPaths = (report.meta.doctor_runs as Array<{ logPath: string }>).map(
       (run) => run.logPath,

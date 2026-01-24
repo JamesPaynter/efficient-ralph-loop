@@ -87,6 +87,7 @@ import {
   startBatch,
   type CheckpointCommit,
   type ControlPlaneSnapshot,
+  type DoctorCanarySummary,
   type RunState,
   type ValidatorResult,
   type ValidatorStatus,
@@ -967,6 +968,7 @@ export async function runProject(
     const doctorValidatorConfig = config.doctor_validator;
     const doctorValidatorMode = resolveValidatorMode(doctorValidatorConfig);
     const doctorValidatorEnabled = doctorValidatorMode !== "off";
+    const doctorCanaryConfig = config.doctor_canary;
     let testValidatorLog: JsonlLogger | null = null;
     let doctorValidatorLog: JsonlLogger | null = null;
     const closeValidatorLogs = (): void => {
@@ -2148,33 +2150,66 @@ export async function runProject(
         integrationDoctorPassed = doctorOk;
 
         if (doctorOk) {
-          logOrchestratorEvent(orchLog, "doctor.canary.start", { batch_id: params.batchId });
-          const doctorCanaryStartedAt = Date.now();
-          doctorCanaryResult = await runDoctorCanary({
-            command: config.doctor,
-            cwd: repoPath,
-            timeoutSeconds: config.doctor_timeout,
-          });
-          recordDoctorDuration(runMetrics, Date.now() - doctorCanaryStartedAt);
-          lastIntegrationDoctorCanary = doctorCanaryResult;
+          if (doctorCanaryConfig.mode === "off") {
+            doctorCanaryResult = { status: "skipped", reason: "Disabled by config" };
+            lastIntegrationDoctorCanary = doctorCanaryResult;
+            logOrchestratorEvent(orchLog, "doctor.canary.skipped", {
+              batch_id: params.batchId,
+              payload: {
+                reason: "disabled_by_config",
+                message: "Doctor canary disabled via doctor_canary.mode=off.",
+              },
+            });
+          } else {
+            logOrchestratorEvent(orchLog, "doctor.canary.start", {
+              batch_id: params.batchId,
+              env_var: doctorCanaryConfig.env_var,
+            });
+            const doctorCanaryStartedAt = Date.now();
+            doctorCanaryResult = await runDoctorCanary({
+              command: config.doctor,
+              cwd: repoPath,
+              timeoutSeconds: config.doctor_timeout,
+              envVar: doctorCanaryConfig.env_var,
+            });
+            recordDoctorDuration(runMetrics, Date.now() - doctorCanaryStartedAt);
+            lastIntegrationDoctorCanary = doctorCanaryResult;
 
-          if (doctorCanaryResult.status === "unexpected_pass") {
-            logOrchestratorEvent(orchLog, "doctor.canary.failed", {
-              batch_id: params.batchId,
-              exit_code: doctorCanaryResult.exitCode,
-              message: "Doctor exited 0 with ORCH_CANARY=1 (expected non-zero).",
-              output_preview: doctorCanaryResult.output.slice(0, 500),
-            });
-          } else if (doctorCanaryResult.status === "expected_fail") {
-            logOrchestratorEvent(orchLog, "doctor.canary.pass", {
-              batch_id: params.batchId,
-              exit_code: doctorCanaryResult.exitCode,
-              output_preview: doctorCanaryResult.output.slice(0, 500),
-            });
+            if (doctorCanaryResult.status === "unexpected_pass") {
+              const envLabel = formatDoctorCanaryEnvVar(doctorCanaryResult.envVar);
+              const severity = doctorCanaryConfig.warn_on_unexpected_pass ? "warn" : "error";
+              logOrchestratorEvent(orchLog, "doctor.canary.unexpected_pass", {
+                batch_id: params.batchId,
+                payload: {
+                  exit_code: doctorCanaryResult.exitCode,
+                  env_var: doctorCanaryResult.envVar,
+                  severity,
+                  message: `Doctor did not fail when ${envLabel} (expected non-zero exit).`,
+                  recommendation: `Wrap your doctor in a script that exits non-zero when ${envLabel} is set (see README).`,
+                  output_preview: doctorCanaryResult.output.slice(0, 500),
+                },
+              });
+            } else if (doctorCanaryResult.status === "expected_fail") {
+              logOrchestratorEvent(orchLog, "doctor.canary.expected_fail", {
+                batch_id: params.batchId,
+                payload: {
+                  exit_code: doctorCanaryResult.exitCode,
+                  env_var: doctorCanaryResult.envVar,
+                  output_preview: doctorCanaryResult.output.slice(0, 500),
+                },
+              });
+            }
           }
         } else {
           doctorCanaryResult = { status: "skipped", reason: "Integration doctor failed" };
           lastIntegrationDoctorCanary = doctorCanaryResult;
+          logOrchestratorEvent(orchLog, "doctor.canary.skipped", {
+            batch_id: params.batchId,
+            payload: {
+              reason: "integration_doctor_failed",
+              message: "Skipping canary because integration doctor failed.",
+            },
+          });
         }
 
         if (!doctorOk) {
@@ -2201,7 +2236,9 @@ export async function runProject(
         doctorCommand: config.doctor,
         doctorCanary: doctorCanaryResult,
         trigger: "doctor_canary_failed",
-        triggerNotes: "Doctor exited successfully with ORCH_CANARY=1 (expected non-zero).",
+        triggerNotes: `Doctor exited successfully with ${formatDoctorCanaryEnvVar(
+          doctorCanaryResult?.envVar,
+        )} (expected non-zero).`,
         config: doctorValidatorConfig,
         orchestratorLog: orchLog,
         logger: doctorValidatorLog ?? undefined,
@@ -2273,6 +2310,7 @@ export async function runProject(
     completeBatch(state, params.batchId, batchStatus, {
       mergeCommit: batchMergeCommit,
       integrationDoctorPassed,
+      integrationDoctorCanary: buildDoctorCanarySummary(doctorCanaryResult),
     });
     await stateStore.save(state);
 
@@ -3010,12 +3048,13 @@ async function runDoctorCanary(args: {
   command: string;
   cwd: string;
   timeoutSeconds?: number;
+  envVar: string;
 }): Promise<DoctorCanaryResult> {
   const res = await execaCommand(args.command, {
     cwd: args.cwd,
     shell: true,
     reject: false,
-    env: { ...process.env, ORCH_CANARY: "1" },
+    env: { ...process.env, [args.envVar]: "1" },
     timeout: args.timeoutSeconds ? args.timeoutSeconds * 1000 : undefined,
   });
 
@@ -3023,10 +3062,10 @@ async function runDoctorCanary(args: {
   const output = limitText(`${res.stdout}\n${res.stderr}`.trim(), DOCTOR_CANARY_OUTPUT_LIMIT);
 
   if (exitCode === 0) {
-    return { status: "unexpected_pass", exitCode, output };
+    return { status: "unexpected_pass", exitCode, output, envVar: args.envVar };
   }
 
-  return { status: "expected_fail", exitCode, output };
+  return { status: "expected_fail", exitCode, output, envVar: args.envVar };
 }
 
 function summarizeTestReport(report: TestValidationReport): string {
@@ -3065,14 +3104,40 @@ function formatErrorMessage(err: unknown): string {
   return String(err);
 }
 
+function formatDoctorCanaryEnvVar(envVar?: string): string {
+  const trimmed = envVar?.trim();
+  return `${trimmed && trimmed.length > 0 ? trimmed : "ORCH_CANARY"}=1`;
+}
+
 function formatDoctorCanarySummary(canary: DoctorCanaryResult): string {
   if (canary.status === "skipped") {
     return `Canary: skipped (${canary.reason})`;
   }
 
+  const envLabel = formatDoctorCanaryEnvVar(canary.envVar);
   return canary.status === "unexpected_pass"
-    ? "Canary: unexpected pass with ORCH_CANARY=1"
-    : "Canary: failed as expected with ORCH_CANARY=1";
+    ? `Canary: unexpected pass with ${envLabel}`
+    : `Canary: failed as expected with ${envLabel}`;
+}
+
+function buildDoctorCanarySummary(
+  canary?: DoctorCanaryResult,
+): DoctorCanarySummary | undefined {
+  if (!canary) return undefined;
+
+  if (canary.status === "skipped") {
+    return {
+      status: "skipped",
+      env_var: canary.envVar,
+      reason: canary.reason,
+    };
+  }
+
+  return {
+    status: canary.status,
+    env_var: canary.envVar,
+    exit_code: canary.exitCode,
+  };
 }
 
 function limitText(text: string, limit: number): string {

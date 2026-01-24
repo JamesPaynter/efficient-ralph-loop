@@ -172,4 +172,31 @@ docker:
     expect(config.docker.cpu_quota).toBe(75_000);
     expect(config.docker.pids_limit).toBe(128);
   });
+
+  it("applies doctor canary defaults", () => {
+    const configPath = writeConfig(
+      "defaults.yaml",
+      `
+repo_path: /tmp/repo
+main_branch: development-codex
+doctor: "npm test"
+resources:
+  - name: backend
+    paths: ["server/*"]
+planner:
+  provider: openai
+  model: o3
+worker:
+  model: gpt-5.1-codex-max
+`,
+    );
+
+    const config = loadProjectConfig(configPath);
+
+    expect(config.doctor_canary).toEqual({
+      mode: "env",
+      env_var: "ORCH_CANARY",
+      warn_on_unexpected_pass: true,
+    });
+  });
 });
