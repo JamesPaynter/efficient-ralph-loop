@@ -7,6 +7,18 @@
 - [x] [053 - Template & packaging cleanup (reduce ambiguity)](docs/tasks/archive/053-template-and-packaging-cleanup/spec.md) (Effort <M>, Tier <standard>)
 - [x] [054 - Spec traceability matrix and acceptance checklist](docs/tasks/archive/054-spec-traceability-matrix-and-acceptance-checklist/spec.md) (Effort <M>, Tier <standard>)
 
+## Mycelium Fix Plan - Task Pack (v2)
+
+- [ ] [200 - Task Kanban directory layout (backlog / active / archive)](.mycelium/tasks/200-task-kanban-directory-layout/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [201 - Move tasks through stages + archive completed tasks](.mycelium/tasks/201-task-stage-transitions-and-archiving/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [208 - Fix "task complete" semantics (only complete after merge + integration doctor)](.mycelium/tasks/208-task-complete-after-merge/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [202 - Task blocking strategy + resume correctness (manifest-first)](.mycelium/tasks/202-task-blocking-and-resume-strategy/spec.md) (Effort <L>, Tier <standard>)
+- [ ] [203 - Doctor robustness: explicit canary config + clearer failure modes](.mycelium/tasks/203-doctor-canary-config-and-diagnostics/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [204 - Add an explicit lint step to the worker workflow (pre-doctor)](.mycelium/tasks/204-worker-lint-step/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [205 - Add a Style Validator (LLM code review for naming / style / unused vars)](.mycelium/tasks/205-style-validator/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [206 - Add an Architecture Validator (LLM review of changes vs architecture docs)](.mycelium/tasks/206-architecture-validator/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [207 - Cleanup on success: delete task workspaces (and stale containers)](.mycelium/tasks/207-cleanup-workspaces-on-success/spec.md) (Effort <M>, Tier <standard>)
+
 ## Control Plane — Phase A (agent navigation tools)
 
 - [ ] [055 - Control Plane navigation CLI skeleton](.mycelium/tasks/055-control-plane-navigation-cli-skeleton/spec.md) (Effort <M>, Tier <standard>)
