@@ -91,6 +91,17 @@ export const TaskStateSchema = z.object({
 
 export type TaskState = z.infer<typeof TaskStateSchema>;
 
+export const DoctorCanarySummarySchema = z
+  .object({
+    status: z.enum(["expected_fail", "unexpected_pass", "skipped"]),
+    env_var: z.string().optional(),
+    exit_code: z.number().int().optional(),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+export type DoctorCanarySummary = z.infer<typeof DoctorCanarySummarySchema>;
+
 export const BatchStateSchema = z.object({
   batch_id: z.number().int(),
   status: BatchStatusSchema,
@@ -99,6 +110,7 @@ export const BatchStateSchema = z.object({
   completed_at: z.string().optional(),
   merge_commit: z.string().optional(),
   integration_doctor_passed: z.boolean().optional(),
+  integration_doctor_canary: DoctorCanarySummarySchema.optional(),
   locks: LocksSchema.optional(),
 });
 
@@ -298,7 +310,11 @@ export function completeBatch(
   state: RunState,
   batchId: number,
   status: BatchStatus,
-  meta: { mergeCommit?: string; integrationDoctorPassed?: boolean } = {},
+  meta: {
+    mergeCommit?: string;
+    integrationDoctorPassed?: boolean;
+    integrationDoctorCanary?: DoctorCanarySummary;
+  } = {},
   now: string = isoNow(),
 ): void {
   if (status === "pending" || status === "running") {
@@ -315,6 +331,9 @@ export function completeBatch(
   if (meta.mergeCommit !== undefined) batch.merge_commit = meta.mergeCommit;
   if (meta.integrationDoctorPassed !== undefined) {
     batch.integration_doctor_passed = meta.integrationDoctorPassed;
+  }
+  if (meta.integrationDoctorCanary !== undefined) {
+    batch.integration_doctor_canary = meta.integrationDoctorCanary;
   }
 }
 

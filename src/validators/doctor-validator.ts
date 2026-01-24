@@ -32,9 +32,9 @@ type DoctorRunSample = {
 };
 
 export type DoctorCanaryResult =
-  | { status: "expected_fail"; exitCode: number; output: string }
-  | { status: "unexpected_pass"; exitCode: number; output: string }
-  | { status: "skipped"; reason: string };
+  | { status: "expected_fail"; exitCode: number; output: string; envVar: string }
+  | { status: "unexpected_pass"; exitCode: number; output: string; envVar: string }
+  | { status: "skipped"; reason: string; envVar?: string };
 
 type ValidationContext = {
   doctorCommand: string;
@@ -547,19 +547,25 @@ function truncate(text: string, limit: number): { text: string; truncated: boole
   return { text: `${text.slice(0, limit)}\n... [truncated]`, truncated: true };
 }
 
+function formatDoctorCanaryEnvVar(envVar?: string): string {
+  const trimmed = envVar?.trim();
+  return `${trimmed && trimmed.length > 0 ? trimmed : "ORCH_CANARY"}=1`;
+}
+
 function formatDoctorCanaryForPrompt(canary?: DoctorCanaryResult): string {
   if (!canary) {
-    return "Doctor canary: not yet recorded. Add ORCH_CANARY handling to your doctor wrapper.";
+    return "Doctor canary: not yet recorded. Add canary env var handling to your doctor wrapper.";
   }
 
   if (canary.status === "skipped") {
     return `Doctor canary: skipped (${canary.reason}).`;
   }
 
+  const envLabel = formatDoctorCanaryEnvVar(canary.envVar);
   const lines = [
     canary.status === "unexpected_pass"
-      ? "Doctor canary: DID NOT fail when ORCH_CANARY=1 (unexpected pass)."
-      : "Doctor canary: failed as expected when ORCH_CANARY=1.",
+      ? `Doctor canary: DID NOT fail when ${envLabel} (unexpected pass).`
+      : `Doctor canary: failed as expected when ${envLabel}.`,
     `Exit code: ${canary.exitCode}`,
   ];
 

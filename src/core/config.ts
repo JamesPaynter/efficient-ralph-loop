@@ -100,6 +100,16 @@ const DoctorValidatorSchema = ValidatorSchema.extend({
   run_every_n_tasks: z.number().int().positive().default(10),
 }).strict();
 
+const DoctorCanaryModeSchema = z.enum(["off", "env"]);
+
+const DoctorCanarySchema = z
+  .object({
+    mode: DoctorCanaryModeSchema.default("env"),
+    env_var: z.string().min(1).default("ORCH_CANARY"),
+    warn_on_unexpected_pass: z.boolean().default(true),
+  })
+  .strict();
+
 const LogSummariesSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -164,6 +174,7 @@ export const ProjectConfigSchema = z
 
     doctor: z.string().min(1),
     doctor_timeout: z.number().int().positive().optional(),
+    doctor_canary: DoctorCanarySchema.default({}),
 
     // Optional: run once in the worker container before Codex starts.
     // Example: ["npm ci", "npm test -- --help"]
@@ -194,6 +205,8 @@ export type PlannerConfig = z.infer<typeof PlannerSchema>;
 export type WorkerConfig = z.infer<typeof WorkerSchema>;
 export type ValidatorConfig = z.infer<typeof ValidatorSchema>;
 export type DoctorValidatorConfig = z.infer<typeof DoctorValidatorSchema>;
+export type DoctorCanaryConfig = z.infer<typeof DoctorCanarySchema>;
+export type DoctorCanaryMode = z.infer<typeof DoctorCanaryModeSchema>;
 export type LogSummaryConfig = z.infer<typeof LogSummariesSchema>;
 export type UiConfig = z.infer<typeof UiSchema>;
 export type ValidatorMode = z.infer<typeof ValidatorModeSchema>;
