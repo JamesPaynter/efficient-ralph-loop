@@ -55,7 +55,9 @@ import {
   moveTaskDir,
   resolveTaskDir,
   resolveTaskManifestPath,
+  resolveTaskSpecPath,
 } from "./task-layout.js";
+import { computeTaskFingerprint, upsertLedgerEntry } from "./task-ledger.js";
 import {
   orchestratorHome,
   orchestratorLogPath,
@@ -2612,6 +2614,64 @@ export async function runProject(
       integrationDoctorCanary: buildDoctorCanarySummary(doctorCanaryResult),
     });
     await stateStore.save(state);
+
+    if (integrationDoctorPassed === true && batchMergeCommit) {
+      const ledgerCandidates = params.batchTasks.filter((task) => {
+        const status = state.tasks[task.manifest.id]?.status;
+        return status === "complete" || status === "skipped";
+      });
+
+      if (ledgerCandidates.length > 0) {
+        logOrchestratorEvent(orchLog, "ledger.write.start", {
+          batch_id: params.batchId,
+          merge_commit: batchMergeCommit,
+          tasks: ledgerCandidates.map((task) => task.manifest.id),
+        });
+
+        const ledgerCompleted: string[] = [];
+        for (const task of ledgerCandidates) {
+          const taskId = task.manifest.id;
+          const manifestPath = resolveTaskManifestPath({
+            tasksRoot: tasksRootAbs,
+            stage: task.stage,
+            taskDirName: task.taskDirName,
+          });
+          const specPath = resolveTaskSpecPath({
+            tasksRoot: tasksRootAbs,
+            stage: task.stage,
+            taskDirName: task.taskDirName,
+          });
+
+          try {
+            const fingerprint = await computeTaskFingerprint({ manifestPath, specPath });
+            const completedAt = state.tasks[taskId]?.completed_at ?? isoNow();
+            await upsertLedgerEntry(projectName, {
+              taskId,
+              status: state.tasks[taskId].status === "skipped" ? "skipped" : "complete",
+              fingerprint,
+              mergeCommit: batchMergeCommit,
+              integrationDoctorPassed: true,
+              completedAt,
+              runId,
+              source: "executor",
+            });
+            ledgerCompleted.push(taskId);
+          } catch (error) {
+            logOrchestratorEvent(orchLog, "ledger.write.error", {
+              batch_id: params.batchId,
+              taskId,
+              message: formatErrorMessage(error),
+            });
+          }
+        }
+
+        logOrchestratorEvent(orchLog, "ledger.write.complete", {
+          batch_id: params.batchId,
+          merge_commit: batchMergeCommit,
+          tasks: ledgerCompleted,
+        });
+      }
+    }
 
     const postMergeFinishedCount = completed.size + failed.size;
     const shouldRunDoctorValidatorSuspicious =
