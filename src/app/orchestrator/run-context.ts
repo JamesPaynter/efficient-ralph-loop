@@ -1,20 +1,31 @@
 /**
- * RunContext + composition root for orchestrator runs.
- * Purpose: centralize run-scoped config and injected ports to avoid globals.
+ * RunContext + default adapters for orchestrator runs.
+ * Purpose: centralize run-scoped config types and injected ports to avoid globals.
  * Assumptions: ports are thin adapters over core modules and are overrideable for tests.
- * Usage: buildRunContext({ projectName, config, options, legacy }) and call runEngine.
+ * Usage: buildRunContext(...) from run-context-builder and call runEngine.
  */
 
 import { runWorker } from "../../../worker/loop.js";
 import { buildControlPlaneModel } from "../../control-plane/model/build.js";
 import type { ControlPlaneModel } from "../../control-plane/model/schema.js";
+import type { SurfacePatternSet } from "../../control-plane/policy/types.js";
 import { ControlPlaneStore } from "../../control-plane/storage.js";
-import type { ProjectConfig } from "../../core/config.js";
+import type {
+  ControlPlaneChecksMode,
+  ControlPlaneLockMode,
+  ControlPlaneResourcesMode,
+  ControlPlaneScopeMode,
+  ManifestEnforcementPolicy,
+  ProjectConfig,
+  ValidatorMode,
+} from "../../core/config.js";
 import { JsonlLogger, logOrchestratorEvent } from "../../core/logger.js";
+import type { JsonObject } from "../../core/logger.js";
 import { orchestratorLogPath } from "../../core/paths.js";
 import { StateStore, findLatestRunId } from "../../core/state-store.js";
 import { isoNow, readJsonFile } from "../../core/utils.js";
 import { removeRunWorkspace, removeTaskWorkspace, prepareTaskWorkspace } from "../../core/workspaces.js";
+import type { ContainerSpec } from "../../docker/docker.js";
 import { buildTaskBranchName } from "../../git/branches.js";
 import { listChangedFiles } from "../../git/changes.js";
 import { ensureCleanWorkingTree, checkout, resolveRunBaseSha, headSha, isAncestor } from "../../git/git.js";
@@ -35,21 +46,99 @@ export type LegacyExecutor<RunOptions, RunResult> = {
   runProject: (projectName: string, config: ProjectConfig, options: RunOptions) => Promise<RunResult>;
 };
 
-export type RunContext<RunOptions = unknown, RunResult = unknown> = {
+export type RunContextOptions = {
+  runId?: string;
+  resume?: boolean;
+  reuseCompleted?: boolean;
+  importRun?: string;
+  maxParallel?: number;
+  cleanupOnSuccess?: boolean;
+  useDocker?: boolean;
+  stopContainersOnExit?: boolean;
+};
+
+export type RunValidatorConfig<TConfig> = {
+  config: TConfig | undefined;
+  mode: ValidatorMode;
+  enabled: boolean;
+};
+
+export type ControlPlaneChecksRunConfig = {
+  mode: ControlPlaneChecksMode;
+  commandsByComponent: Record<string, string>;
+  maxComponentsForScoped: number;
+  fallbackCommand?: string;
+};
+
+export type ControlPlaneRunConfig = {
+  enabled: boolean;
+  componentResourcePrefix: string;
+  fallbackResource: string;
+  resourcesMode: ControlPlaneResourcesMode;
+  scopeMode: ControlPlaneScopeMode;
+  lockMode: ControlPlaneLockMode;
+  checks: ControlPlaneChecksRunConfig;
+  surfacePatterns: SurfacePatternSet;
+  surfaceLocksEnabled: boolean;
+};
+
+export type RunContextResolved = {
+  run: {
+    runId: string;
+    isResume: boolean;
+    reuseCompleted: boolean;
+    importRunId?: string;
+    maxParallel: number;
+  };
+  cleanup: {
+    workspacesOnSuccess: boolean;
+    containersOnSuccess: boolean;
+  };
+  paths: {
+    repoPath: string;
+    tasksRootAbs: string;
+    tasksDirPosix: string;
+  };
+  docker: {
+    useDocker: boolean;
+    stopContainersOnExit: boolean;
+    workerImage: string;
+    containerResources: ContainerSpec["resources"];
+    containerSecurityPayload: JsonObject;
+    networkMode: ProjectConfig["docker"]["network_mode"];
+    containerUser: string;
+  };
+  controlPlane: {
+    config: ControlPlaneRunConfig;
+  };
+  policy: {
+    manifestPolicy: ManifestEnforcementPolicy;
+    costPer1kTokens: number;
+    mockLlmMode: boolean;
+  };
+  flags: {
+    crashAfterContainerStart: boolean;
+  };
+  validators: {
+    test: RunValidatorConfig<ProjectConfig["test_validator"]>;
+    style: RunValidatorConfig<ProjectConfig["style_validator"]>;
+    architecture: RunValidatorConfig<ProjectConfig["architecture_validator"]>;
+    doctor: RunValidatorConfig<ProjectConfig["doctor_validator"]>;
+    doctorCanary: ProjectConfig["doctor_canary"];
+  };
+};
+
+export type RunContextBase<RunOptions = unknown> = {
   projectName: string;
   config: ProjectConfig;
   options: RunOptions;
   ports: OrchestratorPorts;
-  legacy: LegacyExecutor<RunOptions, RunResult>;
+  resolved: RunContextResolved;
 };
 
-export type BuildRunContextInput<RunOptions, RunResult> = {
-  projectName: string;
-  config: ProjectConfig;
-  options: RunOptions;
+export type RunContext<RunOptions = unknown, RunResult = unknown> = {
   legacy: LegacyExecutor<RunOptions, RunResult>;
-  ports?: Partial<OrchestratorPorts>;
-};
+} & RunContextBase<RunOptions>;
 
 
 // =============================================================================
@@ -100,27 +189,5 @@ export function createDefaultPorts(): OrchestratorPorts {
       loadModel: (modelPath) => readJsonFile<ControlPlaneModel>(modelPath),
       createStore: (repoPath) => new ControlPlaneStore(repoPath),
     },
-  };
-}
-
-
-// =============================================================================
-// COMPOSITION ROOT
-// =============================================================================
-
-export function buildRunContext<RunOptions, RunResult>(
-  input: BuildRunContextInput<RunOptions, RunResult>,
-): RunContext<RunOptions, RunResult> {
-  const ports: OrchestratorPorts = {
-    ...createDefaultPorts(),
-    ...input.ports,
-  };
-
-  return {
-    projectName: input.projectName,
-    config: input.config,
-    options: input.options,
-    ports,
-    legacy: input.legacy,
   };
 }
