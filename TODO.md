@@ -19,6 +19,10 @@
 - [ ] [206 - Add an Architecture Validator (LLM review of changes vs architecture docs)](.mycelium/tasks/206-architecture-validator/spec.md) (Effort <M>, Tier <standard>)
 - [ ] [207 - Cleanup on success: delete task workspaces (and stale containers)](.mycelium/tasks/207-cleanup-workspaces-on-success/spec.md) (Effort <M>, Tier <standard>)
 
+## Mycelium Visualizer — Event Tail
+
+- [ ] [209 - Visualizer Event Tail UX: sticky expansion + Codex summaries](.mycelium/tasks/209-visualizer-event-tail-ux/spec.md) (Effort <M>, Tier <standard>)
+
 ## Mycelium Fix Plan - Cross-Run State (Task Pack v3)
 
 - [ ] [210 - Cross-run task ledger v1 (schema + fingerprint + persistence)](.mycelium/tasks/210-cross-run-task-ledger-v1/spec.md) (Effort <M>, Tier <standard>)
