@@ -7,3 +7,103 @@
 - [x] [053 - Template & packaging cleanup (reduce ambiguity)](docs/tasks/archive/053-template-and-packaging-cleanup/spec.md) (Effort <M>, Tier <standard>)
 - [x] [054 - Spec traceability matrix and acceptance checklist](docs/tasks/archive/054-spec-traceability-matrix-and-acceptance-checklist/spec.md) (Effort <M>, Tier <standard>)
 - [x] ALL_TASKS_COMPLETE
+
+# TODO
+
+- [x] [049 - Docs parity and spec rebaseline](docs/tasks/archive/049-docs-parity-and-spec-rebaseline/spec.md) (Effort <M>, Tier <standard>)
+- [x] [050 - Docker-mode end-to-end smoke test](docs/tasks/archive/050-docker-mode-e2e-smoke-test/spec.md) (Effort <L>, Tier <standard>)
+- [x] [051 - Resume and crash recovery acceptance suite (reattach + thread resume)](docs/tasks/archive/051-resume-and-crash-recovery-acceptance-suite/spec.md) (Effort <L>, Tier <pro>)
+- [x] [052 - Graceful stop semantics (SIGINT/SIGTERM) and reliable resume](docs/tasks/archive/052-signal-handling-and-clean-stop/spec.md) (Effort <M>, Tier <standard>)
+- [x] [053 - Template & packaging cleanup (reduce ambiguity)](docs/tasks/archive/053-template-and-packaging-cleanup/spec.md) (Effort <M>, Tier <standard>)
+- [x] [054 - Spec traceability matrix and acceptance checklist](docs/tasks/archive/054-spec-traceability-matrix-and-acceptance-checklist/spec.md) (Effort <M>, Tier <standard>)
+
+## Mycelium Fix Plan - Task Pack (v2)
+
+- [ ] [200 - Task Kanban directory layout (backlog / active / archive)](.mycelium/tasks/200-task-kanban-directory-layout/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [201 - Move tasks through stages + archive completed tasks](.mycelium/tasks/201-task-stage-transitions-and-archiving/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [208 - Fix "task complete" semantics (only complete after merge + integration doctor)](.mycelium/tasks/208-task-complete-after-merge/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [202 - Task blocking strategy + resume correctness (manifest-first)](.mycelium/tasks/202-task-blocking-and-resume-strategy/spec.md) (Effort <L>, Tier <standard>)
+- [ ] [203 - Doctor robustness: explicit canary config + clearer failure modes](.mycelium/tasks/203-doctor-canary-config-and-diagnostics/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [204 - Add an explicit lint step to the worker workflow (pre-doctor)](.mycelium/tasks/204-worker-lint-step/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [205 - Add a Style Validator (LLM code review for naming / style / unused vars)](.mycelium/tasks/205-style-validator/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [206 - Add an Architecture Validator (LLM review of changes vs architecture docs)](.mycelium/tasks/206-architecture-validator/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [207 - Cleanup on success: delete task workspaces (and stale containers)](.mycelium/tasks/207-cleanup-workspaces-on-success/spec.md) (Effort <M>, Tier <standard>)
+
+## Mycelium Visualizer — Event Tail
+
+- [ ] [209 - Visualizer Event Tail UX: sticky expansion + Codex summaries](.mycelium/tasks/209-visualizer-event-tail-ux/spec.md) (Effort <M>, Tier <standard>)
+
+## Mycelium Fix Plan - Cross-Run State (Task Pack v3)
+
+- [ ] [210 - Cross-run task ledger v1 (schema + fingerprint + persistence)](.mycelium/tasks/210-cross-run-task-ledger-v1/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [211 - Record task completions into ledger + backfill/import from run state](.mycelium/tasks/211-record-ledger-on-merge-and-backfill/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [212 - Consult ledger for dependency satisfaction across runs (seed new runs safely)](.mycelium/tasks/212-consult-ledger-for-deps-and-seed-run/spec.md) (Effort <L>, Tier <standard>)
+- [ ] [213 - CLI: import prior run completions + manual task status overrides](.mycelium/tasks/213-cli-import-and-manual-overrides/spec.md) (Effort <M>, Tier <standard>)
+
+## Control Plane — Phase A (agent navigation tools)
+
+- [ ] [055 - Control Plane navigation CLI skeleton](.mycelium/tasks/055-control-plane-navigation-cli-skeleton/spec.md) (Effort <M>, Tier <standard>)
+- [x] [056 - Commit-addressed model store + cp build/info](.mycelium/tasks/056-commit-addressed-model-store-cp-build-info/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [057 - Component boundaries + file ownership queries](.mycelium/tasks/057-component-boundaries-file-ownership-queries/spec.md) (Effort <L>, Tier <standard>)
+- [x] [058 - Component dependency edges + deps/rdeps queries](.mycelium/tasks/058-component-dependency-edges-deps-rdeps-queries/spec.md) (Effort <L>, Tier <pro>)
+- [x] [059 - Blast radius query](.mycelium/tasks/059-blast-radius-query/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [060 - TypeScript symbol index (definitions)](.mycelium/tasks/060-typescript-symbol-index-definitions/spec.md) (Effort <L>, Tier <pro>)
+- [x] [061 - TypeScript symbol references](.mycelium/tasks/061-typescript-symbol-references/spec.md) (Effort <L>, Tier <pro>)
+- [ ] [062 - Make navigation tools agent-native](.mycelium/tasks/062-make-navigation-tools-agent-native/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [063 - Fixture repo + golden tests](.mycelium/tasks/063-fixture-repo-golden-tests/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [064 - Docker-mode smoke test for Control Plane tools](.mycelium/tasks/064-docker-mode-smoke-test-for-control-plane-tools/spec.md) (Effort <M>, Tier <standard>)
+
+## Control Plane — Phase B (graph-derived scope, locks, and safety policy)
+
+- [x] [065 - Pin Control Plane model to a run (base SHA handshake)](.mycelium/tasks/065-pin-control-plane-model-to-a-run-base-sha-handshake/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [066 - Graph-derived resources (components) merged into scheduling + manifest enforcement](.mycelium/tasks/066-graph-derived-resources-components-merged-into-scheduling-manifest-enforcement/spec.md) (Effort <L>, Tier <pro>)
+- [x] [067 - Derived scope engine (shadow reports)](.mycelium/tasks/067-derived-scope-engine-shadow-reports/spec.md) (Effort <M>, Tier <standard>)
+- [x] [068 - Scheduler lock mode: declared vs shadow vs derived (opt-in)](.mycelium/tasks/068-scheduler-lock-mode-declared-vs-shadow-vs-derived-opt-in/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [069 - Graph-backed scope compliance: warn → block rollout](.mycelium/tasks/069-graph-backed-scope-compliance-warn-block-rollout/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [070 - Blast radius from diff: touched → impacted components](.mycelium/tasks/070-blast-radius-from-diff-touched-impacted-components/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [071 - Scoped checkset computation (conservative fallback to doctor)](.mycelium/tasks/071-scoped-checkset-computation-conservative-fallback-to-doctor/spec.md) (Effort <L>, Tier <pro>)
+- [x] [072 - Surface change detection MVP (contracts/config/public entrypoints)](.mycelium/tasks/072-surface-change-detection-mvp-contracts-config-public-entrypoints/spec.md) (Effort <S>, Tier <standard>)
+- [ ] [073 - Surface-aware gates + optional surface locks](.mycelium/tasks/073-surface-aware-gates-optional-surface-locks/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [074 - Autonomy tiers (risk classification that drives enforcement)](.mycelium/tasks/074-autonomy-tiers-risk-classification-that-drives-enforcement/spec.md) (Effort <M>, Tier <standard>)
+- [ ] [075 - Policy transparency: cp policy eval + per-task artifacts](.mycelium/tasks/075-policy-transparency-cp-policy-eval-per-task-artifacts/spec.md) (Effort <S>, Tier <standard>)
+- [x] [076 - Metrics + feedback loop for Phase B (prove value, guide simplification)](.mycelium/tasks/076-metrics-feedback-loop-for-phase-b-prove-value-guide-simplification/spec.md) (Effort <S>, Tier <standard>)
+
+- [ ] ALL_TASKS_COMPLETE
+
+## Mycelium Visualizer UI (read-only localhost)
+
+### Phase UI-0: Server + APIs (cursor-based tail)
+- [ ] [077 - UI server scaffolding + static hosting + run summary endpoint](.mycelium/tasks/077-ui-server-scaffold-summary-endpoint/spec.md)
+- [ ] [078 - JSONL cursor/offset tail helper (shared, tested)](.mycelium/tasks/078-jsonl-tail-cursor-helper/spec.md)
+- [ ] [079 - Orchestrator events API: /orchestrator/events (cursor + typeGlob)](.mycelium/tasks/079-api-orchestrator-events-tail/spec.md)
+- [ ] [080 - Task events API: /tasks/:taskId/events (cursor + typeGlob); bootstrap output via typeGlob=bootstrap.*](.mycelium/tasks/080-api-task-events-tail-bootstrap-filter/spec.md)
+- [ ] [081 - Diagnostics APIs: doctor snippet, compliance.json, validator reports](.mycelium/tasks/081-api-diagnostics-doctor-compliance-validators/spec.md)
+
+### Phase UI-1: CLI + Config integration
+- [ ] [082 - Config schema + CLI wiring (mycelium ui; run/resume start UI by default with --no-ui)](.mycelium/tasks/082-cli-config-ui-integration/spec.md)
+
+### Phase UI-2: Frontend MVP
+- [ ] [083 - Static frontend MVP (overview, tasks list, task detail w/ event tail + filters)](.mycelium/tasks/083-frontend-mvp-static-ui/spec.md)
+
+### Phase UI-3: Build + Tests
+- [ ] [084 - Build/packaging (dist/ui) + unit/smoke tests (cursor tail + endpoints)](.mycelium/tasks/084-build-packaging-tests-ui/spec.md)
+
+## UI Visualizer — Garden + Map Views
+
+- [ ] 085 — UI multi-view shell + routing (List / Garden / Map)
+- [ ] 086 — Garden view MVP: forest floor + landmarks + running mushrooms
+- [ ] 087 — Garden: stable layout + transitions + reduced-motion
+- [ ] 088 — Garden: activity ribbons via cursor-tail task events (pulses)
+- [ ] 089 — Garden: click-through inspector drawer (reuse List task detail)
+- [ ] 090 — Garden: mycelium threads overlay (Level 1: orchestrator knot + pulsing threads)
+
+- [ ] 091 — API: code graph snapshot (control-plane model + component stats)
+- [ ] 092 — Map view MVP: deterministic mycelium network render (SVG)
+- [ ] 093 — Map: growth semantics (thickness, mushrooms, fairies grounded in metrics)
+- [ ] 094 — Map: component inspector + subgraph highlighting
+
+- [ ] 095 — Packaging + smoke tests for Garden + Map views
+- [x] [096 - Garden: workstations diorama scaffolding (static scene layer)](.mycelium/tasks/096-garden-workstations-diorama-frame/spec.md) (Effort <M>, Tier <standard>)
+- [x] [097 - Garden: workstations mapping + stable slotting + overflow + agent rendering](.mycelium/tasks/097-garden-workstations-slotting-overflow/spec.md) (Effort <L>, Tier <standard>)
+- [x] [098 - Garden: snapshot diff + 2 FPS stepped transitions (handoffs + terminal poses)](.mycelium/tasks/098-garden-workstations-diff-stepped-transitions/spec.md) (Effort <L>, Tier <standard>)
+- [x] [099 - Garden: interactions (workstation + agent selection hooks)](.mycelium/tasks/099-garden-workstations-interactions-selection/spec.md) (Effort <M>, Tier <standard>)
