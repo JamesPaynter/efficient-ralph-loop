@@ -1362,8 +1362,8 @@ export async function runProject(
     for (const seeded of seedResult.seeded) {
       logOrchestratorEvent(orchLog, "task.seeded_complete", {
         task_id: seeded.taskId,
-        merge_commit: seeded.entry.mergeCommit,
-        ledger_run_id: seeded.entry.runId,
+        merge_commit: seeded.entry.mergeCommit ?? null,
+        ledger_run_id: seeded.entry.runId ?? null,
       });
     }
 
@@ -2940,9 +2940,9 @@ export async function runProject(
           task_id: taskId,
           deps: deps.map((dep) => ({
             dep_id: dep.depId,
-            merge_commit: dep.mergeCommit,
-            ledger_run_id: dep.runId,
-            completed_at: dep.completedAt,
+            merge_commit: dep.mergeCommit ?? null,
+            ledger_run_id: dep.runId ?? null,
+            completed_at: dep.completedAt ?? null,
           })),
         });
       }
