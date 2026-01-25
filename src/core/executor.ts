@@ -4,6 +4,8 @@ import { execa, execaCommand } from "execa";
 import fg from "fast-glob";
 import fse from "fs-extra";
 
+import { buildRunContext } from "../app/orchestrator/run-context.js";
+import { runEngine } from "../app/orchestrator/run-engine.js";
 import {
   dockerClient,
   createContainer,
@@ -933,6 +935,22 @@ function roundToDecimals(value: number, decimals: number): number {
 }
 
 export async function runProject(
+  projectName: string,
+  config: ProjectConfig,
+  opts: RunOptions,
+): Promise<RunResult> {
+  const context = buildRunContext({
+    projectName,
+    config,
+    options: opts,
+    legacy: { runProject: runProjectLegacy },
+  });
+
+  return runEngine(context);
+}
+
+// Legacy run flow remains intact while orchestration is extracted.
+async function runProjectLegacy(
   projectName: string,
   config: ProjectConfig,
   opts: RunOptions,
