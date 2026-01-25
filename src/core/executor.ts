@@ -4,7 +4,11 @@ import { execa, execaCommand } from "execa";
 import fg from "fast-glob";
 import fse from "fs-extra";
 
-import { buildRunContext } from "../app/orchestrator/run-context.js";
+import {
+  buildRunContext,
+  buildRunContextBase,
+} from "../app/orchestrator/run-context-builder.js";
+import type { ControlPlaneRunConfig } from "../app/orchestrator/run-context.js";
 import { runEngine } from "../app/orchestrator/run-engine.js";
 import { formatErrorMessage, normalizeAbortReason } from "../app/orchestrator/helpers/errors.js";
 import {
@@ -25,7 +29,6 @@ import {
   removeContainer,
   imageExists,
   findContainerByName,
-  DEFAULT_CPU_PERIOD,
 } from "../docker/docker.js";
 import { buildWorkerImage } from "../docker/image.js";
 import { streamContainerLogs, type LogStreamHandle } from "../docker/streams.js";
@@ -37,24 +40,16 @@ import { ensureCodexAuthForHome } from "./codexAuth.js";
 import { resolveCodexReasoningEffort } from "./codex-reasoning.js";
 
 import type {
-  ControlPlaneChecksMode,
   ControlPlaneLockMode,
   ControlPlaneResourcesMode,
   ControlPlaneScopeMode,
-  ControlPlaneSurfacePatternsConfig,
   DoctorValidatorConfig,
   ManifestEnforcementPolicy,
   ProjectConfig,
   ResourceConfig,
   ValidatorMode,
 } from "./config.js";
-import {
-  DEFAULT_COST_PER_1K_TOKENS,
-  detectBudgetBreaches,
-  parseTaskTokenUsage,
-  recomputeRunUsage,
-  type TaskUsageUpdate,
-} from "./budgets.js";
+import { detectBudgetBreaches, parseTaskTokenUsage, recomputeRunUsage, type TaskUsageUpdate } from "./budgets.js";
 import {
   JsonlLogger,
   logJsonLineOrRaw,
@@ -99,7 +94,7 @@ import {
   runSummaryReportPath,
 } from "./paths.js";
 import { buildGreedyBatch, topologicalReady, type BatchPlan, type LockResolver } from "./scheduler.js";
-import { StateStore, findLatestRunId } from "./state-store.js";
+import { StateStore } from "./state-store.js";
 import {
   completeBatch,
   createRunState,
@@ -117,7 +112,7 @@ import {
   type ValidatorResult,
   type ValidatorStatus,
 } from "./state.js";
-import { ensureDir, defaultRunId, isoNow, readJsonFile, writeJsonFile } from "./utils.js";
+import { ensureDir, isoNow, readJsonFile, writeJsonFile } from "./utils.js";
 import { prepareTaskWorkspace, removeTaskWorkspace } from "./workspaces.js";
 import {
   runDoctorValidator,
@@ -140,7 +135,6 @@ import {
   type ResourceOwnershipResolver,
 } from "./manifest-compliance.js";
 import { computeRescopeFromCompliance } from "./manifest-rescope.js";
-import { isMockLlmEnabled } from "../llm/mock.js";
 import { buildControlPlaneModel } from "../control-plane/model/build.js";
 import { ControlPlaneStore } from "../control-plane/storage.js";
 import type { ControlPlaneModel } from "../control-plane/model/schema.js";
@@ -158,7 +152,6 @@ import {
   buildBlastRadiusReport,
   type ControlPlaneBlastRadiusReport,
 } from "../control-plane/integration/blast-radius.js";
-import { resolveSurfacePatterns } from "../control-plane/policy/surface-detect.js";
 import type { PolicyDecision, SurfacePatternSet } from "../control-plane/policy/types.js";
 import { type ChecksetDecision } from "../control-plane/policy/checkset.js";
 import {
@@ -260,106 +253,6 @@ type ValidatorRunSummary = {
   reportPath: string | null;
   trigger?: string;
 };
-
-type ContainerResourceLimits = {
-  memoryBytes?: number;
-  cpuQuota?: number;
-  cpuPeriod?: number;
-  pidsLimit?: number;
-};
-
-function buildContainerResources(config: ProjectConfig["docker"]): ContainerResourceLimits | undefined {
-  const memoryBytes =
-    config.memory_mb !== undefined ? Math.trunc(config.memory_mb * 1024 * 1024) : undefined;
-  const cpuQuota = config.cpu_quota;
-  const pidsLimit = config.pids_limit;
-
-  if (memoryBytes === undefined && cpuQuota === undefined && pidsLimit === undefined) {
-    return undefined;
-  }
-
-  const limits: ContainerResourceLimits = {};
-  if (memoryBytes !== undefined) {
-    limits.memoryBytes = memoryBytes;
-  }
-  if (cpuQuota !== undefined) {
-    limits.cpuQuota = cpuQuota;
-    limits.cpuPeriod = DEFAULT_CPU_PERIOD;
-  }
-  if (pidsLimit !== undefined) {
-    limits.pidsLimit = pidsLimit;
-  }
-
-  return limits;
-}
-
-function buildContainerSecurityPayload(config: ProjectConfig["docker"]): JsonObject {
-  const payload: JsonObject = {
-    user: config.user,
-    network_mode: config.network_mode,
-  };
-
-  if (config.memory_mb !== undefined) {
-    payload.memory_mb = config.memory_mb;
-  }
-  if (config.cpu_quota !== undefined) {
-    payload.cpu_quota = config.cpu_quota;
-    payload.cpu_period = DEFAULT_CPU_PERIOD;
-  }
-  if (config.pids_limit !== undefined) {
-    payload.pids_limit = config.pids_limit;
-  }
-
-  return payload;
-}
-
-type ControlPlaneChecksRunConfig = {
-  mode: ControlPlaneChecksMode;
-  commandsByComponent: Record<string, string>;
-  maxComponentsForScoped: number;
-  fallbackCommand?: string;
-};
-
-type ControlPlaneRunConfig = {
-  enabled: boolean;
-  componentResourcePrefix: string;
-  fallbackResource: string;
-  resourcesMode: ControlPlaneResourcesMode;
-  scopeMode: ControlPlaneScopeMode;
-  lockMode: ControlPlaneLockMode;
-  checks: ControlPlaneChecksRunConfig;
-  surfacePatterns: SurfacePatternSet;
-  surfaceLocksEnabled: boolean;
-};
-
-function resolveControlPlaneConfig(config: ProjectConfig): ControlPlaneRunConfig {
-  const raw = (config.control_plane ?? {}) as Partial<ProjectConfig["control_plane"]>;
-  const rawChecks = (raw.checks ?? {}) as Partial<ProjectConfig["control_plane"]["checks"]>;
-  const rawSurfacePatterns =
-    (raw.surface_patterns ?? {}) as ControlPlaneSurfacePatternsConfig;
-  const rawSurfaceLocks =
-    (raw.surface_locks ?? {}) as Partial<ProjectConfig["control_plane"]["surface_locks"]>;
-  const fallbackResourceRaw = raw.fallback_resource ?? "repo-root";
-  const fallbackResource = fallbackResourceRaw.trim().length > 0
-    ? fallbackResourceRaw.trim()
-    : "repo-root";
-  return {
-    enabled: raw.enabled === true,
-    componentResourcePrefix: raw.component_resource_prefix ?? "component:",
-    fallbackResource,
-    resourcesMode: raw.resources_mode ?? "prefer-derived",
-    scopeMode: raw.scope_mode ?? "enforce",
-    lockMode: raw.lock_mode ?? "declared",
-    checks: {
-      mode: rawChecks.mode ?? "off",
-      commandsByComponent: rawChecks.commands_by_component ?? {},
-      maxComponentsForScoped: rawChecks.max_components_for_scoped ?? 3,
-      fallbackCommand: rawChecks.fallback_command,
-    },
-    surfacePatterns: resolveSurfacePatterns(rawSurfacePatterns),
-    surfaceLocksEnabled: rawSurfaceLocks.enabled ?? false,
-  };
-}
 
 function resolveEffectiveLockMode(config: ControlPlaneRunConfig): ControlPlaneLockMode {
   return config.enabled ? config.lockMode : "declared";
@@ -935,7 +828,7 @@ export async function runProject(
   config: ProjectConfig,
   opts: RunOptions,
 ): Promise<RunResult> {
-  const context = buildRunContext({
+  const context = await buildRunContext({
     projectName,
     config,
     options: opts,
@@ -954,44 +847,56 @@ async function runProjectLegacy(
   const stopController = buildStopController(opts.stopSignal);
 
   try {
-    const isResume = opts.resume ?? false;
-    const reuseCompleted = opts.reuseCompleted ?? !isResume;
-    const importRunId = opts.importRun;
-    let runId: string;
-
-    if (isResume) {
-      const resolvedRunId = opts.runId ?? (await findLatestRunId(projectName));
-      if (!resolvedRunId) {
-        throw new Error(`No runs found to resume for project ${projectName}.`);
-      }
-      runId = resolvedRunId;
-    } else {
-      runId = opts.runId ?? defaultRunId();
-    }
-    const maxParallel = opts.maxParallel ?? config.max_parallel;
-    const cleanupConfig = config.cleanup ?? { workspaces: "never", containers: "never" };
-    const cleanupWorkspacesOnSuccess = cleanupConfig.workspaces === "on_success";
-    const cleanupContainersOnSuccess =
-      opts.cleanupOnSuccess ?? (cleanupConfig.containers === "on_success");
-    const useDocker = opts.useDocker ?? true;
-    const stopContainersOnExit = opts.stopContainersOnExit ?? false;
+    const runContext = await buildRunContextBase({
+      projectName,
+      config,
+      options: opts,
+    });
+    const {
+      run: { runId, isResume, reuseCompleted, importRunId, maxParallel },
+      cleanup: {
+        workspacesOnSuccess: cleanupWorkspacesOnSuccess,
+        containersOnSuccess: cleanupContainersOnSuccess,
+      },
+      paths: { repoPath, tasksRootAbs, tasksDirPosix },
+      docker: {
+        useDocker,
+        stopContainersOnExit,
+        workerImage,
+        containerResources,
+        containerSecurityPayload,
+        networkMode,
+        containerUser,
+      },
+      policy: { manifestPolicy, costPer1kTokens, mockLlmMode },
+      flags: { crashAfterContainerStart },
+      validators: {
+        test: {
+          config: testValidatorConfig,
+          mode: testValidatorMode,
+          enabled: testValidatorEnabled,
+        },
+        style: {
+          config: styleValidatorConfig,
+          mode: styleValidatorMode,
+          enabled: styleValidatorEnabled,
+        },
+        architecture: {
+          config: architectureValidatorConfig,
+          mode: architectureValidatorMode,
+          enabled: architectureValidatorEnabled,
+        },
+        doctor: {
+          config: doctorValidatorConfig,
+          mode: doctorValidatorMode,
+          enabled: doctorValidatorEnabled,
+        },
+        doctorCanary: doctorCanaryConfig,
+      },
+    } = runContext.resolved;
+    let controlPlaneConfig = runContext.resolved.controlPlane.config;
     const plannedBatches: BatchPlanEntry[] = [];
-    const crashAfterContainerStart =
-      process.env.MYCELIUM_FAKE_CRASH_AFTER_CONTAINER_START === "1";
-
-    const repoPath = config.repo_path;
-    const tasksRootAbs = path.join(repoPath, config.tasks_dir);
-    const tasksDirPosix = config.tasks_dir.split(path.sep).join(path.posix.sep);
-    const workerImage = config.docker.image;
-    const containerResources = buildContainerResources(config.docker);
-    const containerSecurityPayload = buildContainerSecurityPayload(config.docker);
-    const networkMode = config.docker.network_mode;
-    const containerUser = config.docker.user;
-    let controlPlaneConfig = resolveControlPlaneConfig(config);
     const docker = useDocker ? dockerClient() : null;
-    const manifestPolicy: ManifestEnforcementPolicy = config.manifest_enforcement ?? "warn";
-    const costPer1kTokens = DEFAULT_COST_PER_1K_TOKENS;
-    const mockLlmMode = isMockLlmEnabled() || config.worker.model === "mock";
     let stopRequested: StopRequest | null = null;
     let state!: RunState;
 
@@ -999,19 +904,6 @@ async function runProjectLegacy(
     await ensureDir(orchestratorHome());
     const stateStore = new StateStore(projectName, runId);
     const orchLog = new JsonlLogger(orchestratorLogPath(projectName, runId), { runId });
-    const testValidatorConfig = config.test_validator;
-    const testValidatorMode = resolveValidatorMode(testValidatorConfig);
-    const testValidatorEnabled = testValidatorMode !== "off";
-    const styleValidatorConfig = config.style_validator;
-    const styleValidatorMode = resolveValidatorMode(styleValidatorConfig);
-    const styleValidatorEnabled = styleValidatorMode !== "off";
-    const architectureValidatorConfig = config.architecture_validator;
-    const architectureValidatorMode = resolveValidatorMode(architectureValidatorConfig);
-    const architectureValidatorEnabled = architectureValidatorMode !== "off";
-    const doctorValidatorConfig = config.doctor_validator;
-    const doctorValidatorMode = resolveValidatorMode(doctorValidatorConfig);
-    const doctorValidatorEnabled = doctorValidatorMode !== "off";
-    const doctorCanaryConfig = config.doctor_canary;
     let testValidatorLog: JsonlLogger | null = null;
     let styleValidatorLog: JsonlLogger | null = null;
     let architectureValidatorLog: JsonlLogger | null = null;
@@ -3627,12 +3519,6 @@ function relativeReportPath(
 function shouldBlockValidator(mode: ValidatorMode, status: ValidatorStatus): boolean {
   if (mode !== "block") return false;
   return status === "fail" || status === "error";
-}
-
-function resolveValidatorMode(cfg?: { enabled?: boolean; mode?: ValidatorMode }): ValidatorMode {
-  if (!cfg) return "off";
-  if (cfg.enabled === false) return "off";
-  return cfg.mode ?? "warn";
 }
 
 async function readValidatorReport<T>(reportPath: string): Promise<T | null> {
