@@ -50,6 +50,32 @@ export async function headSha(cwd: string): Promise<string> {
   return res.stdout.trim();
 }
 
+export async function isAncestor(
+  repoPath: string,
+  ancestorSha: string,
+  descendantSha: string,
+): Promise<boolean> {
+  const res = await execa(
+    "git",
+    ["merge-base", "--is-ancestor", ancestorSha, descendantSha],
+    {
+      cwd: repoPath,
+      stdio: "pipe",
+      reject: false,
+    },
+  );
+
+  if (res.exitCode === 0) return true;
+  if (res.exitCode === 1) return false;
+
+  const stdout = typeof res.stdout === "string" ? res.stdout : String(res.stdout ?? "");
+  const stderr = typeof res.stderr === "string" ? res.stderr : String(res.stderr ?? "");
+  throw new GitError(
+    `git merge-base --is-ancestor ${ancestorSha} ${descendantSha} failed (cwd=${repoPath}): ${stderr}`,
+    { stdout, stderr },
+  );
+}
+
 export async function resolveRunBaseSha(repoPath: string, mainBranch: string): Promise<string> {
   const branch = await currentBranch(repoPath);
   if (branch !== mainBranch) {

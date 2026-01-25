@@ -6,7 +6,9 @@ import fse from "fs-extra";
 import { z } from "zod";
 
 import { taskLedgerPath } from "./paths.js";
-import { TaskManifestSchema, normalizeTaskManifest } from "./task-manifest.js";
+import { TaskManifestSchema, normalizeTaskManifest, type TaskSpec } from "./task-manifest.js";
+import { resolveTaskManifestPath, resolveTaskSpecPath } from "./task-layout.js";
+import type { RunState } from "./state.js";
 import { isoNow } from "./utils.js";
 
 
@@ -115,6 +117,94 @@ export async function upsertLedgerEntry(
 
   await saveTaskLedger(projectName, ledger);
   return ledger;
+}
+
+export async function importLedgerFromRunState(opts: {
+  projectName: string;
+  repoPath: string;
+  runId: string;
+  tasks: TaskSpec[];
+  state: RunState;
+}): Promise<{ imported: string[]; skipped: string[] }> {
+  const tasksById = new Map(opts.tasks.map((task) => [task.manifest.id, task]));
+  const tasksRoot = path.join(opts.repoPath, ".mycelium", "tasks");
+  const imported: string[] = [];
+  const skipped: string[] = [];
+
+  for (const [taskId, taskState] of Object.entries(opts.state.tasks)) {
+    if (taskState.status !== "complete" && taskState.status !== "skipped") {
+      continue;
+    }
+
+    const taskSpec = tasksById.get(taskId);
+    if (!taskSpec) {
+      console.warn(
+        `Warning: task ${taskId} missing from current tasks directory; skipping ledger import.`,
+      );
+      skipped.push(taskId);
+      continue;
+    }
+
+    const batchId = taskState.batch_id;
+    const batch = opts.state.batches.find((entry) => entry.batch_id === batchId);
+    if (!batch?.merge_commit || batch.integration_doctor_passed !== true) {
+      skipped.push(taskId);
+      continue;
+    }
+
+    const manifestPath = resolveTaskManifestPath({
+      tasksRoot,
+      stage: taskSpec.stage,
+      taskDirName: taskSpec.taskDirName,
+    });
+    const specPath = resolveTaskSpecPath({
+      tasksRoot,
+      stage: taskSpec.stage,
+      taskDirName: taskSpec.taskDirName,
+    });
+
+    const [manifestExists, specExists] = await Promise.all([
+      fse.pathExists(manifestPath),
+      fse.pathExists(specPath),
+    ]);
+    if (!manifestExists || !specExists) {
+      console.warn(
+        `Warning: task ${taskId} missing manifest/spec in ${tasksRoot}; skipping ledger import.`,
+      );
+      skipped.push(taskId);
+      continue;
+    }
+
+    let fingerprint: string;
+    try {
+      fingerprint = await computeTaskFingerprint({ manifestPath, specPath });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`Warning: task ${taskId} fingerprint failed: ${detail}`);
+      skipped.push(taskId);
+      continue;
+    }
+
+    try {
+      await upsertLedgerEntry(opts.projectName, {
+        taskId,
+        status: taskState.status,
+        fingerprint,
+        mergeCommit: batch.merge_commit,
+        integrationDoctorPassed: true,
+        completedAt: taskState.completed_at ?? isoNow(),
+        runId: opts.runId,
+        source: "import-run",
+      });
+      imported.push(taskId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`Warning: task ${taskId} ledger upsert failed: ${detail}`);
+      skipped.push(taskId);
+    }
+  }
+
+  return { imported, skipped };
 }
 
 export async function computeTaskFingerprint(options: {
