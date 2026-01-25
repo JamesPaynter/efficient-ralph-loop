@@ -2,6 +2,8 @@
 // Purpose: render run summary, task table, and task detail/events for the List view.
 // Usage: created by app.js and driven via onSummary / onSelectionChanged callbacks.
 
+const SUMMARY_MAX_LENGTH = 140;
+
 export function createListView({ appState, actions, fetchApi }) {
   const viewState = {
     isActive: true,
@@ -317,7 +319,6 @@ export function renderTaskInspector(container, appState, options = {}) {
   const { fetchApi, showCloseButton = false, onClose } = options;
   const EVENTS_POLL_INTERVAL_MS = 2000;
   const MAX_EVENTS_PER_VIEW = 240;
-  const SUMMARY_MAX_LENGTH = 140;
 
   if (!container) {
     return buildNoopInspector();
@@ -1143,197 +1144,6 @@ export function renderTaskInspector(container, appState, options = {}) {
     }
   }
 
-  function getCodexInnerEvent(event) {
-    if (event.type !== "codex.event") {
-      return null;
-    }
-
-    const payload = getEventPayload(event);
-    if (!payload || typeof payload.event !== "object" || payload.event === null) {
-      return null;
-    }
-
-    return payload.event;
-  }
-
-  function getEventDisplayType(event) {
-    const innerEvent = getCodexInnerEvent(event);
-    if (innerEvent && typeof innerEvent.type === "string" && innerEvent.type.trim()) {
-      return innerEvent.type.trim();
-    }
-
-    return event.type;
-  }
-
-  function getEventPayload(event) {
-    if (!event.payload || typeof event.payload !== "object") {
-      return null;
-    }
-
-    return event.payload;
-  }
-
-  function extractEventMessage(event) {
-    const payload = getEventPayload(event);
-    if (!payload) {
-      return "";
-    }
-
-    if (event.type === "codex.prompt") {
-      const preview = extractFirstStringField(payload, ["preview"]);
-      if (preview) {
-        return formatSummaryText(preview);
-      }
-    }
-
-    const innerEvent = getCodexInnerEvent(event);
-    if (innerEvent) {
-      const summary = summarizeCodexInnerEvent(innerEvent);
-      if (summary) {
-        return summary;
-      }
-    }
-
-    return extractMessageFromPayload(payload);
-  }
-
-  function summarizeCodexInnerEvent(innerEvent) {
-    const innerType = typeof innerEvent.type === "string" ? innerEvent.type.toLowerCase() : "";
-    const toolName = extractFirstStringField(innerEvent, [
-      "tool_name",
-      "name",
-      "command",
-      "toolName",
-    ]);
-
-    const isToolEvent =
-      Boolean(toolName) ||
-      innerType.includes("tool") ||
-      innerType.includes("function") ||
-      innerType.includes("command");
-
-    if (isToolEvent) {
-      const argsValue = extractFirstFieldValue(innerEvent, ["args", "arguments", "input", "params"]);
-      const argsPreview = formatArgsPreview(argsValue);
-      const namePreview = toolName || "unknown";
-      const summary = `tool: ${namePreview}${argsPreview ? " " + argsPreview : ""}`;
-      return formatSummaryText(summary);
-    }
-
-    const isThinkingEvent = innerType.includes("thought") || innerType.includes("thinking");
-    const textPreview = extractFirstStringField(innerEvent, ["text", "content", "delta", "message"]);
-
-    if (isThinkingEvent) {
-      const summary = textPreview ? `*thinking* ${textPreview}` : "*thinking*";
-      return formatSummaryText(summary);
-    }
-
-    if (textPreview) {
-      return formatSummaryText(textPreview);
-    }
-
-    return "";
-  }
-
-  function extractMessageFromPayload(payload) {
-    const candidates = [
-      payload.message,
-      payload.summary,
-      payload.text,
-      payload.raw,
-      payload.reason,
-      payload.note,
-      payload.status,
-    ];
-
-    for (const candidate of candidates) {
-      if (typeof candidate === "string" && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-
-    return "";
-  }
-
-  function extractFirstStringField(source, fields) {
-    if (!source || typeof source !== "object") {
-      return "";
-    }
-
-    for (const field of fields) {
-      const value = source[field];
-      if (typeof value === "string" && value.trim()) {
-        return value.trim();
-      }
-    }
-
-    return "";
-  }
-
-  function extractFirstFieldValue(source, fields) {
-    if (!source || typeof source !== "object") {
-      return null;
-    }
-
-    for (const field of fields) {
-      const value = source[field];
-      if (value === null || value === undefined) {
-        continue;
-      }
-      if (typeof value === "string" && !value.trim()) {
-        continue;
-      }
-      return value;
-    }
-
-    return null;
-  }
-
-  function formatArgsPreview(value) {
-    if (value === null || value === undefined) {
-      return "";
-    }
-
-    if (typeof value === "string") {
-      return value.trim();
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-      return String(value);
-    }
-
-    try {
-      return JSON.stringify(value);
-    } catch (error) {
-      return String(value);
-    }
-  }
-
-  function hashString(value) {
-    let hash = 5381;
-    for (let index = 0; index < value.length; index += 1) {
-      hash = (hash << 5) + hash + value.charCodeAt(index);
-    }
-    return `event-${(hash >>> 0).toString(36)}`;
-  }
-
-  function formatSummaryText(text) {
-    if (!text) {
-      return "";
-    }
-
-    const normalized = String(text).replace(/\s+/g, " ").trim();
-    if (!normalized) {
-      return "";
-    }
-
-    if (normalized.length <= SUMMARY_MAX_LENGTH) {
-      return normalized;
-    }
-
-    return `${normalized.slice(0, SUMMARY_MAX_LENGTH - 3).trimEnd()}...`;
-  }
-
   function buildEventCard(event) {
     const card = document.createElement("details");
     card.className = "event-card";
@@ -1353,7 +1163,7 @@ export function renderTaskInspector(container, appState, options = {}) {
 
     const message = document.createElement("span");
     message.className = "event-message";
-    message.textContent = extractEventMessage(event) || "(no message)";
+    message.textContent = summarizeEventMessage(event) || "(no message)";
 
     meta.append(ts, type, message);
     summary.appendChild(meta);
@@ -1368,6 +1178,223 @@ export function renderTaskInspector(container, appState, options = {}) {
   function setDetailError(message) {
     setErrorMessage(elements.detailError, message);
   }
+}
+
+
+// =============================================================================
+// EVENT HELPERS
+// =============================================================================
+
+export function summarizeEventMessage(event) {
+  const payload = getEventPayload(event);
+  if (!payload) {
+    return "";
+  }
+
+  if (event.type === "codex.prompt") {
+    const preview = extractFirstStringField(payload, ["preview"]);
+    if (preview) {
+      return formatSummaryText(preview);
+    }
+  }
+
+  const innerEvent = getCodexInnerEvent(event);
+  if (innerEvent) {
+    const summary = summarizeCodexInnerEvent(innerEvent);
+    if (summary) {
+      return summary;
+    }
+  }
+
+  return extractMessageFromPayload(payload);
+}
+
+function getEventDisplayType(event) {
+  const innerEvent = getCodexInnerEvent(event);
+  if (innerEvent && typeof innerEvent.type === "string" && innerEvent.type.trim()) {
+    return innerEvent.type.trim();
+  }
+
+  return event.type;
+}
+
+function getCodexInnerEvent(event) {
+  if (event.type !== "codex.event") {
+    return null;
+  }
+
+  const payload = getEventPayload(event);
+  if (!payload || typeof payload.event !== "object" || payload.event === null) {
+    return null;
+  }
+
+  return payload.event;
+}
+
+function getEventPayload(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+
+  if (!event.payload || typeof event.payload !== "object") {
+    return null;
+  }
+
+  return event.payload;
+}
+
+function summarizeCodexInnerEvent(innerEvent) {
+  const innerType = typeof innerEvent.type === "string" ? innerEvent.type.toLowerCase() : "";
+  const toolName = extractFirstStringField(innerEvent, [
+    "tool_name",
+    "name",
+    "command",
+    "toolName",
+  ]);
+
+  const isToolEvent =
+    Boolean(toolName) ||
+    innerType.includes("tool") ||
+    innerType.includes("function") ||
+    innerType.includes("command");
+
+  if (isToolEvent) {
+    const argsValue = extractFirstFieldValue(innerEvent, ["args", "arguments", "input", "params"]);
+    const argsPreview = formatArgsPreview(argsValue);
+    const namePreview = toolName || "unknown";
+    const summary = `tool: ${namePreview}${argsPreview ? " " + argsPreview : ""}`;
+    return formatSummaryText(summary);
+  }
+
+  const innerItem =
+    typeof innerEvent.item === "object" && innerEvent.item !== null ? innerEvent.item : null;
+  if (innerItem) {
+    const command = extractFirstStringField(innerItem, ["command", "name"]);
+    const exitCode = typeof innerItem.exit_code === "number" ? innerItem.exit_code : null;
+
+    if (command) {
+      const metaParts = [];
+      if (exitCode !== null) {
+        metaParts.push(`exit ${exitCode}`);
+      }
+
+      const metaSuffix = metaParts.length ? ` (${metaParts.join(", ")})` : "";
+      return formatSummaryText(`${command}${metaSuffix}`);
+    }
+  }
+
+  const isThinkingEvent = innerType.includes("thought") || innerType.includes("thinking");
+  const textPreview = extractFirstStringField(innerEvent, ["text", "content", "delta", "message"]);
+
+  if (isThinkingEvent) {
+    const summary = textPreview ? `*thinking* ${textPreview}` : "*thinking*";
+    return formatSummaryText(summary);
+  }
+
+  if (textPreview) {
+    return formatSummaryText(textPreview);
+  }
+
+  return "";
+}
+
+function extractMessageFromPayload(payload) {
+  const candidates = [
+    payload.message,
+    payload.summary,
+    payload.text,
+    payload.raw,
+    payload.reason,
+    payload.note,
+    payload.status,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractFirstStringField(source, fields) {
+  if (!source || typeof source !== "object") {
+    return "";
+  }
+
+  for (const field of fields) {
+    const value = source[field];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractFirstFieldValue(source, fields) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  for (const field of fields) {
+    const value = source[field];
+    if (value === null || value === undefined) {
+      continue;
+    }
+    if (typeof value === "string" && !value.trim()) {
+      continue;
+    }
+    return value;
+  }
+
+  return null;
+}
+
+function formatArgsPreview(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function formatSummaryText(text) {
+  if (!text) {
+    return "";
+  }
+
+  const normalized = String(text).replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= SUMMARY_MAX_LENGTH) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, SUMMARY_MAX_LENGTH - 3).trimEnd()}...`;
+}
+
+function hashString(value) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) + hash + value.charCodeAt(index);
+  }
+  return `event-${(hash >>> 0).toString(36)}`;
 }
 
 
