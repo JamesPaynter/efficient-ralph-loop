@@ -12,6 +12,11 @@ import {
 
 import { isMockLlmEnabled } from "../src/llm/mock.js";
 
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
 export type CodexRunnerOptions = {
   codexHome: string;
   model?: string;
@@ -35,6 +40,30 @@ export type CodexRunnerLike = {
     },
   ): Promise<void>;
 };
+
+export type MockCodexContext = {
+  input: string;
+  turn: number;
+  workingDirectory: string;
+};
+
+export type MockCodexHandler = (context: MockCodexContext) => Promise<void> | void;
+
+
+// =============================================================================
+// MOCK SUPPORT
+// =============================================================================
+
+let mockCodexHandler: MockCodexHandler | null = null;
+
+export function __setMockCodexHandler(handler: MockCodexHandler | null): void {
+  mockCodexHandler = handler;
+}
+
+
+// =============================================================================
+// PUBLIC API
+// =============================================================================
 
 export function createCodexRunner(opts: CodexRunnerOptions): CodexRunnerLike {
   if (isMockLlmEnabled() || opts.model === "mock") {
@@ -140,7 +169,15 @@ class MockCodexRunner {
       await handlers.onThreadStarted?.(this.threadId);
     }
 
-    await this.applyMockChanges(input);
+    if (mockCodexHandler) {
+      await mockCodexHandler({
+        input,
+        turn: this.turn,
+        workingDirectory: this.workingDirectory,
+      });
+    } else {
+      await this.applyMockChanges(input);
+    }
 
     // Optional deterministic token accounting for budget tests.
     // If MOCK_CODEX_USAGE is provided, we emit a synthetic Codex "turn.completed" event
