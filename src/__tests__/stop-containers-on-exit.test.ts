@@ -5,18 +5,26 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { DockerManager } from "../docker/manager.js";
+
 const mocks = vi.hoisted(() => {
-  const listContainersMock = vi.fn();
-  const getContainerMock = vi.fn();
-  const removeContainerMock = vi.fn(async () => undefined);
-  const stopContainerMock = vi.fn(async () => undefined);
-  const imageExistsMock = vi.fn(async () => true);
-  const findContainerByNameMock = vi.fn(async () => null);
-  const createContainerMock = vi.fn();
-  const inspectContainerMock = vi.fn();
-  const startContainerMock = vi.fn();
-  const waitForExitMock = vi.fn();
-  const streamLogsToLoggerMock = vi.fn();
+  const listContainersMock = vi.fn<DockerManager["listContainers"]>();
+  const getContainerMock = vi.fn<DockerManager["getContainer"]>();
+  const removeContainerMock = vi.fn<DockerManager["removeContainer"]>(async (_container) => undefined);
+  const stopContainerMock = vi.fn<DockerManager["stopContainer"]>(
+    async (_container, _timeoutSeconds) => undefined,
+  );
+  const imageExistsMock = vi.fn<DockerManager["imageExists"]>(async (_imageName) => true);
+  const findContainerByNameMock = vi.fn<DockerManager["findContainerByName"]>(
+    async (_name) => null,
+  );
+  const createContainerMock = vi.fn<DockerManager["createContainer"]>();
+  const inspectContainerMock = vi.fn<DockerManager["inspectContainer"]>();
+  const startContainerMock = vi.fn<DockerManager["startContainer"]>(
+    async (_container) => undefined,
+  );
+  const waitForExitMock = vi.fn<DockerManager["waitForExit"]>();
+  const streamLogsToLoggerMock = vi.fn<DockerManager["streamLogsToLogger"]>();
 
   return {
     listContainersMock,

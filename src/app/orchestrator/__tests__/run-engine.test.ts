@@ -16,6 +16,7 @@ import { createPathsContext, runSummaryReportPath, type PathsContext } from "../
 import { StateStore } from "../../../core/state-store.js";
 import { createRunState, startBatch } from "../../../core/state.js";
 import { buildTaskDirName, type TaskManifest } from "../../../core/task-manifest.js";
+import type { listChangedFiles } from "../../../git/changes.js";
 import type { OrchestratorPorts, ValidatorRunner } from "../ports.js";
 import { runEngine, type RunOptions, type RunResult } from "../run/run-engine.js";
 import { buildRunContext } from "../run-context-builder.js";
@@ -59,7 +60,7 @@ const workerRunnerMocks = vi.hoisted(() => {
 });
 
 const changesMocks = vi.hoisted(() => {
-  const listChangedFilesMock = vi.fn(async () => []);
+  const listChangedFilesMock = vi.fn<typeof listChangedFiles>();
   return { listChangedFilesMock };
 });
 
@@ -123,7 +124,8 @@ vi.mock("../../../core/workspaces.js", async () => {
 });
 
 vi.mock("../../../git/changes.js", () => ({
-  listChangedFiles: (...args: unknown[]) => changesMocks.listChangedFilesMock(...args),
+  listChangedFiles: (...args: Parameters<typeof listChangedFiles>) =>
+    changesMocks.listChangedFilesMock(...args),
 }));
 
 

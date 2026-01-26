@@ -146,6 +146,7 @@ export async function runWorker(config: WorkerConfig, logger?: WorkerLogger): Pr
       workerState,
       log,
       loggedResumeEvent,
+      logCodexPrompts,
       workingDirectory: config.workingDirectory,
       checkpointCommits: config.checkpointCommits,
       testPaths,
@@ -456,6 +457,7 @@ async function runStrictTddStageA(args: {
   workerState: WorkerStateStore;
   log: WorkerLogger;
   loggedResumeEvent: boolean;
+  logCodexPrompts: boolean;
   workingDirectory: string;
   checkpointCommits: boolean;
   testPaths: string[];
@@ -505,6 +507,7 @@ async function runStrictTddStageA(args: {
     log: args.log,
     workerState: args.workerState,
     loggedResumeEvent: args.loggedResumeEvent,
+    logCodexPrompts: args.logCodexPrompts,
     prompt,
     runLogsDir: args.runLogsDir,
   });
