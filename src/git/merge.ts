@@ -1,10 +1,15 @@
 import {
   addRemote,
   abortMerge,
+  branchExists,
   checkout,
+  checkoutNewBranch,
+  deleteLocalBranch,
   ensureCleanWorkingTree,
   fetchRemote,
+  git,
   headSha,
+  isAncestor,
   isMergeConflictError,
   mergeNoFf,
   removeRemote,
@@ -28,6 +33,25 @@ export type MergeResult = {
   mergeCommit: string;
 };
 
+export type TempMergeResult = MergeResult & {
+  baseSha: string;
+  tempBranch: string;
+};
+
+export type FastForwardResult =
+  | {
+      status: "fast_forwarded";
+      previousHead: string;
+      head: string;
+    }
+  | {
+      status: "blocked";
+      reason: "main_advanced" | "non_fast_forward";
+      message: string;
+      currentHead: string;
+      targetRef: string;
+    };
+
 export async function mergeTaskBranches(opts: {
   repoPath: string;
   mainBranch: string;
@@ -38,6 +62,86 @@ export async function mergeTaskBranches(opts: {
   await ensureCleanWorkingTree(repoPath);
   await checkout(repoPath, mainBranch);
 
+  return mergeTaskBranchesInCurrent(repoPath, branches);
+}
+
+export async function mergeTaskBranchesToTemp(opts: {
+  repoPath: string;
+  mainBranch: string;
+  tempBranch: string;
+  branches: TaskBranchToMerge[];
+}): Promise<TempMergeResult> {
+  const { repoPath, mainBranch, tempBranch, branches } = opts;
+
+  await ensureCleanWorkingTree(repoPath);
+  await checkout(repoPath, mainBranch);
+  const baseSha = await headSha(repoPath);
+  const resolvedTempBranch = await resolveTempBranchName(repoPath, tempBranch);
+
+  await checkoutNewBranch(repoPath, resolvedTempBranch, baseSha);
+
+  const mergeResult = await mergeTaskBranchesInCurrent(repoPath, branches);
+
+  return {
+    ...mergeResult,
+    baseSha,
+    tempBranch: resolvedTempBranch,
+  };
+}
+
+export async function fastForward(opts: {
+  repoPath: string;
+  mainBranch: string;
+  targetRef: string;
+  expectedBaseSha?: string;
+  cleanupBranch?: string;
+}): Promise<FastForwardResult> {
+  const { repoPath, mainBranch, targetRef, expectedBaseSha, cleanupBranch } = opts;
+
+  await ensureCleanWorkingTree(repoPath);
+  await checkout(repoPath, mainBranch);
+
+  const currentHead = await headSha(repoPath);
+  if (expectedBaseSha && currentHead !== expectedBaseSha) {
+    return {
+      status: "blocked",
+      reason: "main_advanced",
+      message: `Expected ${mainBranch} at ${expectedBaseSha} but found ${currentHead}.`,
+      currentHead,
+      targetRef,
+    };
+  }
+
+  const canFastForward = await isAncestor(repoPath, currentHead, targetRef);
+  if (!canFastForward) {
+    return {
+      status: "blocked",
+      reason: "non_fast_forward",
+      message: `Cannot fast-forward ${mainBranch} to ${targetRef}.`,
+      currentHead,
+      targetRef,
+    };
+  }
+
+  await git(repoPath, ["merge", "--ff-only", targetRef]);
+  const nextHead = await headSha(repoPath);
+
+  if (cleanupBranch) {
+    await deleteLocalBranch(repoPath, cleanupBranch).catch(() => undefined);
+  }
+
+  return { status: "fast_forwarded", previousHead: currentHead, head: nextHead };
+}
+
+function buildWorkspaceRemoteName(taskId: string): string {
+  const safeId = taskId.replace(/[^A-Za-z0-9_.-]/g, "-") || "task";
+  return `task-${safeId}`;
+}
+
+async function mergeTaskBranchesInCurrent(
+  repoPath: string,
+  branches: TaskBranchToMerge[],
+): Promise<MergeResult> {
   const merged: TaskBranchToMerge[] = [];
   const conflicts: MergeConflict[] = [];
   let mergeCommit = await headSha(repoPath);
@@ -73,9 +177,16 @@ export async function mergeTaskBranches(opts: {
   return { status: "merged", merged, conflicts, mergeCommit };
 }
 
-function buildWorkspaceRemoteName(taskId: string): string {
-  const safeId = taskId.replace(/[^A-Za-z0-9_.-]/g, "-") || "task";
-  return `task-${safeId}`;
+async function resolveTempBranchName(repoPath: string, desiredName: string): Promise<string> {
+  let candidate = desiredName;
+  let counter = 1;
+
+  while (await branchExists(repoPath, candidate)) {
+    candidate = `${desiredName}-${counter}`;
+    counter += 1;
+  }
+
+  return candidate;
 }
 
 function formatMergeError(err: unknown): string {

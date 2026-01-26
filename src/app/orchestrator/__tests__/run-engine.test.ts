@@ -407,7 +407,7 @@ describe("runEngine", () => {
     expect(result.state.tasks["002"]?.status).toBe("complete");
     expect(result.state.tasks["002"]?.attempts).toBe(2);
     expect(fakeRunner.runCalls).toHaveLength(3);
-    expect(fakeVcs.mergeCalls).toHaveLength(2);
+    expect(fakeVcs.tempMergeCalls).toHaveLength(2);
   });
 
   it("retries a running task after reset-to-pending on resume", async () => {

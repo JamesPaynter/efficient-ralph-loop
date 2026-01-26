@@ -15,7 +15,7 @@ import {
   isAncestor,
   resolveRunBaseSha,
 } from "../../../git/git.js";
-import { mergeTaskBranches } from "../../../git/merge.js";
+import { fastForward, mergeTaskBranches, mergeTaskBranchesToTemp } from "../../../git/merge.js";
 
 import type { Vcs } from "./vcs.js";
 
@@ -42,6 +42,8 @@ export function createGitVcs(options: GitVcsOptions): Vcs {
     headSha,
     isAncestor,
     mergeTaskBranches,
+    mergeTaskBranchesToTemp,
+    fastForward,
     buildTaskBranchName: (taskId, taskName) =>
       buildTaskBranchName(taskBranchPrefix, taskId, taskName),
     listChangedFiles,

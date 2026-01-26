@@ -16,7 +16,7 @@ import {
   isAncestor,
   resolveRunBaseSha,
 } from "../../../git/git.js";
-import { mergeTaskBranches } from "../../../git/merge.js";
+import { fastForward, mergeTaskBranches, mergeTaskBranchesToTemp } from "../../../git/merge.js";
 
 import { createGitVcs } from "./git-vcs.js";
 
@@ -35,6 +35,8 @@ describe("createGitVcs", () => {
     expect(vcs.headSha).toBe(headSha);
     expect(vcs.isAncestor).toBe(isAncestor);
     expect(vcs.mergeTaskBranches).toBe(mergeTaskBranches);
+    expect(vcs.mergeTaskBranchesToTemp).toBe(mergeTaskBranchesToTemp);
+    expect(vcs.fastForward).toBe(fastForward);
     expect(vcs.listChangedFiles).toBe(listChangedFiles);
     expect(vcs.buildTaskBranchName("001", "Fix Login Button")).toBe("agent/001-fix-login-button");
   });

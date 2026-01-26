@@ -5,7 +5,12 @@
  * Usage: inject into RunContext ports and call from executor helpers.
  */
 
-import type { MergeResult, TaskBranchToMerge } from "../../../git/merge.js";
+import type {
+  FastForwardResult,
+  MergeResult,
+  TaskBranchToMerge,
+  TempMergeResult,
+} from "../../../git/merge.js";
 
 // =============================================================================
 // TYPES
@@ -23,6 +28,19 @@ export interface Vcs {
     mainBranch: string;
     branches: TaskBranchToMerge[];
   }): Promise<MergeResult>;
+  mergeTaskBranchesToTemp(options: {
+    repoPath: string;
+    mainBranch: string;
+    tempBranch: string;
+    branches: TaskBranchToMerge[];
+  }): Promise<TempMergeResult>;
+  fastForward(options: {
+    repoPath: string;
+    mainBranch: string;
+    targetRef: string;
+    expectedBaseSha?: string;
+    cleanupBranch?: string;
+  }): Promise<FastForwardResult>;
   buildTaskBranchName(taskId: string, taskName: string): string;
   listChangedFiles(cwd: string, baseRef: string): Promise<string[]>;
 }

@@ -10,7 +10,12 @@ import path from "node:path";
 import { logOrchestratorEvent, type JsonObject, JsonlLogger } from "../../../core/logger.js";
 import type { PathsContext } from "../../../core/paths.js";
 import { StateStore } from "../../../core/state-store.js";
-import type { MergeResult, TaskBranchToMerge } from "../../../git/merge.js";
+import type {
+  FastForwardResult,
+  MergeResult,
+  TaskBranchToMerge,
+  TempMergeResult,
+} from "../../../git/merge.js";
 import type { Clock, LogSink, StateRepository } from "../ports.js";
 import type { Vcs } from "../vcs/vcs.js";
 import type {
@@ -138,7 +143,11 @@ export class FakeVcs implements Vcs {
   headShaValue = "head-sha";
   mergeCommit = "merge-sha";
   mergeResult: MergeResult | null = null;
+  tempMergeResult: TempMergeResult | null = null;
+  fastForwardResult: FastForwardResult | null = null;
   readonly mergeResults: MergeResult[] = [];
+  readonly tempMergeResults: TempMergeResult[] = [];
+  readonly fastForwardResults: FastForwardResult[] = [];
   changedFiles: string[] = [];
   taskBranchPrefix = "task/";
 
@@ -149,6 +158,19 @@ export class FakeVcs implements Vcs {
     repoPath: string;
     mainBranch: string;
     branches: TaskBranchToMerge[];
+  }> = [];
+  readonly tempMergeCalls: Array<{
+    repoPath: string;
+    mainBranch: string;
+    tempBranch: string;
+    branches: TaskBranchToMerge[];
+  }> = [];
+  readonly fastForwardCalls: Array<{
+    repoPath: string;
+    mainBranch: string;
+    targetRef: string;
+    expectedBaseSha?: string;
+    cleanupBranch?: string;
   }> = [];
   readonly listChangedCalls: Array<{ cwd: string; baseRef: string }> = [];
 
@@ -197,8 +219,62 @@ export class FakeVcs implements Vcs {
     };
   }
 
+  async mergeTaskBranchesToTemp(opts: {
+    repoPath: string;
+    mainBranch: string;
+    tempBranch: string;
+    branches: TaskBranchToMerge[];
+  }): Promise<TempMergeResult> {
+    this.tempMergeCalls.push(opts);
+
+    const queuedTemp = this.tempMergeResults.shift();
+    if (queuedTemp) return queuedTemp;
+
+    const queued = this.mergeResults.shift();
+    if (queued) return { ...queued, baseSha: this.baseSha, tempBranch: opts.tempBranch };
+    if (this.tempMergeResult) return this.tempMergeResult;
+    if (this.mergeResult) {
+      return { ...this.mergeResult, baseSha: this.baseSha, tempBranch: opts.tempBranch };
+    }
+
+    return {
+      status: "merged",
+      merged: opts.branches,
+      conflicts: [],
+      mergeCommit: this.mergeCommit,
+      baseSha: this.baseSha,
+      tempBranch: opts.tempBranch,
+    };
+  }
+
+  async fastForward(opts: {
+    repoPath: string;
+    mainBranch: string;
+    targetRef: string;
+    expectedBaseSha?: string;
+    cleanupBranch?: string;
+  }): Promise<FastForwardResult> {
+    this.fastForwardCalls.push(opts);
+    const queued = this.fastForwardResults.shift();
+    if (queued) return queued;
+    if (this.fastForwardResult) return this.fastForwardResult;
+    return {
+      status: "fast_forwarded",
+      previousHead: opts.expectedBaseSha ?? this.baseSha,
+      head: this.mergeCommit,
+    };
+  }
+
   queueMergeResult(result: MergeResult): void {
     this.mergeResults.push(result);
+  }
+
+  queueTempMergeResult(result: TempMergeResult): void {
+    this.tempMergeResults.push(result);
+  }
+
+  queueFastForwardResult(result: FastForwardResult): void {
+    this.fastForwardResults.push(result);
   }
 
   buildTaskBranchName(taskId: string, taskName: string): string {

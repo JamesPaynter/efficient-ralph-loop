@@ -497,6 +497,8 @@ export function createBatchEngine(
     let integrationDoctorPassed: boolean | undefined;
     let stopReason: BatchStopReason | undefined;
     let integrationDoctorFailureDetail: { exitCode: number; output: string } | null = null;
+    let mergeApplied = false;
+    let appliedTasks: TaskSuccessResult[] = [];
 
     const budgetOutcome = context.budgetTracker.evaluateBreaches({
       state: context.state,
@@ -548,140 +550,186 @@ export function createBatchEngine(
         tasks: successfulTasks.map((r) => r.taskId),
       });
 
-      const mergeResult = await context.vcs.mergeTaskBranches({
-        repoPath: context.repoPath,
-        mainBranch: context.config.main_branch,
-        branches: successfulTasks.map((r) => ({
-          taskId: r.taskId,
-          branchName: r.branchName,
-          workspacePath: r.workspace,
-        })),
-      });
+      const tempBranch = buildTempMergeBranchName(context.runId, params.batchId);
 
-      batchMergeCommit = mergeResult.mergeCommit;
+      try {
+        const mergeResult = await context.vcs.mergeTaskBranchesToTemp({
+          repoPath: context.repoPath,
+          mainBranch: context.config.main_branch,
+          tempBranch,
+          branches: successfulTasks.map((r) => ({
+            taskId: r.taskId,
+            branchName: r.branchName,
+            workspacePath: r.workspace,
+          })),
+        });
 
-      const successfulTasksById = new Map(successfulTasks.map((task) => [task.taskId, task]));
-      mergedTasks = mergeResult.merged
-        .map((task) => successfulTasksById.get(task.taskId))
-        .filter((task): task is TaskSuccessResult => task !== undefined);
+        const successfulTasksById = new Map(successfulTasks.map((task) => [task.taskId, task]));
+        mergedTasks = mergeResult.merged
+          .map((task) => successfulTasksById.get(task.taskId))
+          .filter((task): task is TaskSuccessResult => task !== undefined);
 
-      if (mergeResult.conflicts.length > 0) {
-        for (const conflict of mergeResult.conflicts) {
-          const reason = "merge conflict";
-          resetTaskToPending(context.state, conflict.branch.taskId, reason);
-          logTaskReset(context.orchestratorLog, conflict.branch.taskId, reason);
-          logOrchestratorEvent(context.orchestratorLog, "batch.merge_conflict.recovered", {
-            batch_id: params.batchId,
-            task_id: conflict.branch.taskId,
-            branch: conflict.branch.branchName,
-            message: conflict.message,
-            action: "rescheduled",
-          });
+        if (mergeResult.conflicts.length > 0) {
+          for (const conflict of mergeResult.conflicts) {
+            const reason = "merge conflict";
+            resetTaskToPending(context.state, conflict.branch.taskId, reason);
+            logTaskReset(context.orchestratorLog, conflict.branch.taskId, reason);
+            logOrchestratorEvent(context.orchestratorLog, "batch.merge_conflict.recovered", {
+              batch_id: params.batchId,
+              task_id: conflict.branch.taskId,
+              branch: conflict.branch.branchName,
+              message: conflict.message,
+              action: "rescheduled",
+            });
+          }
+          await context.stateStore.save(context.state);
+          ({ completed, failed } = context.buildStatusSets(context.state));
         }
-        await context.stateStore.save(context.state);
-        ({ completed, failed } = context.buildStatusSets(context.state));
-      }
 
-      if (mergedTasks.length > 0) {
-        logOrchestratorEvent(context.orchestratorLog, "doctor.integration.start", {
-          batch_id: params.batchId,
-          command: context.config.doctor,
-        });
-        const doctorIntegrationStartedAt = Date.now();
-        const doctorRes = await execaCommand(context.config.doctor, {
-          cwd: context.repoPath,
-          shell: true,
-          reject: false,
-          timeout: context.config.doctor_timeout ? context.config.doctor_timeout * 1000 : undefined,
-        });
-        context.recordDoctorDuration(Date.now() - doctorIntegrationStartedAt);
-        lastIntegrationDoctorOutput = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
-        const doctorExitCode = doctorRes.exitCode ?? -1;
-        lastIntegrationDoctorExitCode = doctorExitCode;
-        const doctorOk = doctorExitCode === 0;
-        logOrchestratorEvent(
-          context.orchestratorLog,
-          doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
-          {
+        if (mergedTasks.length > 0) {
+          logOrchestratorEvent(context.orchestratorLog, "doctor.integration.start", {
             batch_id: params.batchId,
-            exit_code: doctorExitCode,
-          },
-        );
-        integrationDoctorPassed = doctorOk;
+            command: context.config.doctor,
+          });
+          const doctorIntegrationStartedAt = Date.now();
+          const doctorRes = await execaCommand(context.config.doctor, {
+            cwd: context.repoPath,
+            shell: true,
+            reject: false,
+            timeout: context.config.doctor_timeout
+              ? context.config.doctor_timeout * 1000
+              : undefined,
+          });
+          context.recordDoctorDuration(Date.now() - doctorIntegrationStartedAt);
+          lastIntegrationDoctorOutput = `${doctorRes.stdout}\n${doctorRes.stderr}`.trim();
+          const doctorExitCode = doctorRes.exitCode ?? -1;
+          lastIntegrationDoctorExitCode = doctorExitCode;
+          const doctorOk = doctorExitCode === 0;
+          logOrchestratorEvent(
+            context.orchestratorLog,
+            doctorOk ? "doctor.integration.pass" : "doctor.integration.fail",
+            {
+              batch_id: params.batchId,
+              exit_code: doctorExitCode,
+            },
+          );
+          integrationDoctorPassed = doctorOk;
 
-        if (doctorOk) {
-          if (context.doctorCanaryConfig.mode === "off") {
-            doctorCanaryResult = { status: "skipped", reason: "Disabled by config" };
+          if (doctorOk) {
+            if (context.doctorCanaryConfig.mode === "off") {
+              doctorCanaryResult = { status: "skipped", reason: "Disabled by config" };
+              lastIntegrationDoctorCanary = doctorCanaryResult;
+              logOrchestratorEvent(context.orchestratorLog, "doctor.canary.skipped", {
+                batch_id: params.batchId,
+                payload: {
+                  reason: "disabled_by_config",
+                  message: "Doctor canary disabled via doctor_canary.mode=off.",
+                },
+              });
+            } else {
+              logOrchestratorEvent(context.orchestratorLog, "doctor.canary.start", {
+                batch_id: params.batchId,
+                env_var: context.doctorCanaryConfig.env_var,
+              });
+              const doctorCanaryStartedAt = Date.now();
+              doctorCanaryResult = await runDoctorCanary({
+                command: context.config.doctor,
+                cwd: context.repoPath,
+                timeoutSeconds: context.config.doctor_timeout,
+                envVar: context.doctorCanaryConfig.env_var,
+              });
+              context.recordDoctorDuration(Date.now() - doctorCanaryStartedAt);
+              lastIntegrationDoctorCanary = doctorCanaryResult;
+
+              if (doctorCanaryResult.status === "unexpected_pass") {
+                const envLabel = formatDoctorCanaryEnvVar(doctorCanaryResult.envVar);
+                const severity = context.doctorCanaryConfig.warn_on_unexpected_pass
+                  ? "warn"
+                  : "error";
+                logOrchestratorEvent(context.orchestratorLog, "doctor.canary.unexpected_pass", {
+                  batch_id: params.batchId,
+                  payload: {
+                    exit_code: doctorCanaryResult.exitCode,
+                    env_var: doctorCanaryResult.envVar,
+                    severity,
+                    message: `Doctor did not fail when ${envLabel} (expected non-zero exit).`,
+                    recommendation: `Wrap your doctor in a script that exits non-zero when ${envLabel} is set (see README).`,
+                    output_preview: doctorCanaryResult.output.slice(0, 500),
+                  },
+                });
+              } else if (doctorCanaryResult.status === "expected_fail") {
+                logOrchestratorEvent(context.orchestratorLog, "doctor.canary.expected_fail", {
+                  batch_id: params.batchId,
+                  payload: {
+                    exit_code: doctorCanaryResult.exitCode,
+                    env_var: doctorCanaryResult.envVar,
+                    output_preview: doctorCanaryResult.output.slice(0, 500),
+                  },
+                });
+              }
+            }
+          } else {
+            doctorCanaryResult = { status: "skipped", reason: "Integration doctor failed" };
             lastIntegrationDoctorCanary = doctorCanaryResult;
             logOrchestratorEvent(context.orchestratorLog, "doctor.canary.skipped", {
               batch_id: params.batchId,
               payload: {
-                reason: "disabled_by_config",
-                message: "Doctor canary disabled via doctor_canary.mode=off.",
+                reason: "integration_doctor_failed",
+                message: "Skipping canary because integration doctor failed.",
               },
             });
-          } else {
-            logOrchestratorEvent(context.orchestratorLog, "doctor.canary.start", {
-              batch_id: params.batchId,
-              env_var: context.doctorCanaryConfig.env_var,
-            });
-            const doctorCanaryStartedAt = Date.now();
-            doctorCanaryResult = await runDoctorCanary({
-              command: context.config.doctor,
-              cwd: context.repoPath,
-              timeoutSeconds: context.config.doctor_timeout,
-              envVar: context.doctorCanaryConfig.env_var,
-            });
-            context.recordDoctorDuration(Date.now() - doctorCanaryStartedAt);
-            lastIntegrationDoctorCanary = doctorCanaryResult;
+          }
 
-            if (doctorCanaryResult.status === "unexpected_pass") {
-              const envLabel = formatDoctorCanaryEnvVar(doctorCanaryResult.envVar);
-              const severity = context.doctorCanaryConfig.warn_on_unexpected_pass
-                ? "warn"
-                : "error";
-              logOrchestratorEvent(context.orchestratorLog, "doctor.canary.unexpected_pass", {
+          if (!doctorOk) {
+            integrationDoctorFailureDetail = {
+              exitCode: doctorExitCode,
+              output: lastIntegrationDoctorOutput ?? "",
+            };
+            context.state.status = "failed";
+            stopReason = "integration_doctor_failed";
+          } else {
+            const fastForwardResult = await context.vcs.fastForward({
+              repoPath: context.repoPath,
+              mainBranch: context.config.main_branch,
+              targetRef: mergeResult.tempBranch,
+              expectedBaseSha: mergeResult.baseSha,
+              cleanupBranch: mergeResult.tempBranch,
+            });
+
+            if (fastForwardResult.status === "fast_forwarded") {
+              mergeApplied = true;
+              appliedTasks = mergedTasks;
+              batchMergeCommit = fastForwardResult.head;
+            } else {
+              const reason =
+                fastForwardResult.reason === "main_advanced"
+                  ? "main advanced during integration"
+                  : "fast-forward blocked";
+
+              for (const task of mergedTasks) {
+                resetTaskToPending(context.state, task.taskId, reason);
+                logTaskReset(context.orchestratorLog, task.taskId, reason);
+              }
+
+              logOrchestratorEvent(context.orchestratorLog, "batch.fast_forward.blocked", {
                 batch_id: params.batchId,
-                payload: {
-                  exit_code: doctorCanaryResult.exitCode,
-                  env_var: doctorCanaryResult.envVar,
-                  severity,
-                  message: `Doctor did not fail when ${envLabel} (expected non-zero exit).`,
-                  recommendation: `Wrap your doctor in a script that exits non-zero when ${envLabel} is set (see README).`,
-                  output_preview: doctorCanaryResult.output.slice(0, 500),
-                },
+                reason: fastForwardResult.reason,
+                message: fastForwardResult.message,
+                current_head: fastForwardResult.currentHead,
+                target_ref: fastForwardResult.targetRef,
+                tasks: mergedTasks.map((task) => task.taskId),
+                action: "rescheduled",
               });
-            } else if (doctorCanaryResult.status === "expected_fail") {
-              logOrchestratorEvent(context.orchestratorLog, "doctor.canary.expected_fail", {
-                batch_id: params.batchId,
-                payload: {
-                  exit_code: doctorCanaryResult.exitCode,
-                  env_var: doctorCanaryResult.envVar,
-                  output_preview: doctorCanaryResult.output.slice(0, 500),
-                },
-              });
+
+              await context.stateStore.save(context.state);
+              ({ completed, failed } = context.buildStatusSets(context.state));
             }
           }
-        } else {
-          doctorCanaryResult = { status: "skipped", reason: "Integration doctor failed" };
-          lastIntegrationDoctorCanary = doctorCanaryResult;
-          logOrchestratorEvent(context.orchestratorLog, "doctor.canary.skipped", {
-            batch_id: params.batchId,
-            payload: {
-              reason: "integration_doctor_failed",
-              message: "Skipping canary because integration doctor failed.",
-            },
-          });
         }
-
-        if (!doctorOk) {
-          integrationDoctorFailureDetail = {
-            exitCode: doctorExitCode,
-            output: lastIntegrationDoctorOutput ?? "",
-          };
-          context.state.status = "failed";
-          stopReason = "integration_doctor_failed";
-        }
+      } finally {
+        await context.vcs
+          .checkout(context.repoPath, context.config.main_branch)
+          .catch(() => undefined);
       }
     }
 
@@ -690,7 +738,7 @@ export function createBatchEngine(
       context.doctorValidatorEnabled &&
       context.doctorValidatorConfig &&
       canaryUnexpectedPass &&
-      mergedTasks.length > 0 &&
+      appliedTasks.length > 0 &&
       !stopReason
     ) {
       const doctorOutcome = await context.validationPipeline?.runDoctorValidation({
@@ -705,7 +753,7 @@ export function createBatchEngine(
       doctorValidatorLastCount = completed.size + failed.size;
 
       if (doctorOutcome) {
-        for (const r of mergedTasks) {
+        for (const r of appliedTasks) {
           applyDoctorOutcome(r.taskId, doctorOutcome, blockedTasks);
         }
         await context.stateStore.save(context.state);
@@ -740,8 +788,8 @@ export function createBatchEngine(
       finalizedTasks = true;
     }
 
-    if (!stopReason && integrationDoctorPassed === true && mergedTasks.length > 0) {
-      for (const task of mergedTasks) {
+    if (!stopReason && integrationDoctorPassed === true && mergeApplied && appliedTasks.length > 0) {
+      for (const task of appliedTasks) {
         markTaskComplete(context.state, task.taskId);
         logOrchestratorEvent(context.orchestratorLog, "task.complete", {
           taskId: task.taskId,
@@ -782,7 +830,7 @@ export function createBatchEngine(
     });
     await context.stateStore.save(context.state);
 
-    if (integrationDoctorPassed === true && batchMergeCommit) {
+    if (integrationDoctorPassed === true && mergeApplied && batchMergeCommit) {
       const ledgerCandidates = params.batchTasks.filter((task) => {
         const status = context.state.tasks[task.manifest.id]?.status;
         return status === "complete" || status === "skipped";
@@ -874,8 +922,8 @@ export function createBatchEngine(
       }
     }
 
-    if (integrationDoctorPassed === true && !stopReason && mergedTasks.length > 0) {
-      const archiveIds = new Set(mergedTasks.map((task) => task.taskId));
+    if (integrationDoctorPassed === true && mergeApplied && !stopReason && appliedTasks.length > 0) {
+      const archiveIds = new Set(appliedTasks.map((task) => task.taskId));
 
       for (const task of params.batchTasks) {
         if (!archiveIds.has(task.manifest.id)) continue;
@@ -912,7 +960,7 @@ export function createBatchEngine(
     await cleanupSuccessfulBatchArtifacts({
       batchStatus,
       integrationDoctorPassed,
-      successfulTasks: mergedTasks,
+      successfulTasks: appliedTasks,
     });
 
     logOrchestratorEvent(context.orchestratorLog, "batch.complete", { batch_id: params.batchId });
@@ -921,6 +969,17 @@ export function createBatchEngine(
 
   return { finalizeBatch };
 }
+
+
+// =============================================================================
+// MERGE HELPERS
+// =============================================================================
+
+function buildTempMergeBranchName(runId: string, batchId: number): string {
+  const safeRunId = runId.replace(/[^A-Za-z0-9_.-]/g, "-") || "run";
+  return `mycelium/merge/${safeRunId}/${batchId}`;
+}
+
 
 // =============================================================================
 // CHANGE MANIFEST
