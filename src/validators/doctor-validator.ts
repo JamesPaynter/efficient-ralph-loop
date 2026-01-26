@@ -1,20 +1,25 @@
 import path from "node:path";
 
-import { execa } from "execa";
 import fse from "fs-extra";
 import { z } from "zod";
 
 import type { DoctorValidatorConfig } from "../core/config.js";
 import { JsonlLogger, logOrchestratorEvent } from "../core/logger.js";
 import type { PathsContext } from "../core/paths.js";
-import { runLogsDir, validatorLogPath, validatorsLogsDir } from "../core/paths.js";
+import { runLogsDir, validatorLogPath } from "../core/paths.js";
 import { renderPromptTemplate } from "../core/prompts.js";
-import { writeJsonFile } from "../core/utils.js";
-import type { LlmClient, LlmCompletionResult } from "../llm/client.js";
-import { LlmError } from "../llm/client.js";
-import { AnthropicClient } from "../llm/anthropic.js";
-import { OpenAiClient } from "../llm/openai.js";
-import { MockLlmClient, isMockLlmEnabled } from "../llm/mock.js";
+import type { LlmClient } from "../llm/client.js";
+
+import { createValidatorClient } from "./lib/client.js";
+import { readDiffSummary, writeRunValidatorReport } from "./lib/io.js";
+import {
+  formatError,
+  normalizeCompletion,
+  safeParseJson,
+  secondsToMs,
+  truncate,
+} from "./lib/normalize.js";
+
 
 // =============================================================================
 // TYPES
@@ -71,6 +76,7 @@ export type DoctorValidatorArgs = {
   llmClient?: LlmClient;
   paths?: PathsContext;
 };
+
 
 // =============================================================================
 // CONSTANTS
@@ -154,6 +160,7 @@ const DoctorValidatorJsonSchema = {
   additionalProperties: false,
 } as const;
 
+
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -205,7 +212,7 @@ export async function runDoctorValidator(
       timeoutMs: secondsToMs(cfg.timeout_seconds),
     });
 
-    const result = normalizeCompletion(completion);
+    const result = normalizeCompletion(completion, DoctorValidationSchema, "Doctor");
     const stats = computeRunStats(context.doctorRuns);
 
     validatorLog.log({
@@ -252,6 +259,7 @@ export async function runDoctorValidator(
   }
 }
 
+
 // =============================================================================
 // INTERNALS
 // =============================================================================
@@ -260,7 +268,7 @@ async function buildValidationContext(args: DoctorValidatorArgs): Promise<Valida
   const runLogs = runLogsDir(args.projectName, args.runId, args.paths);
 
   const [diffSummary, doctorRuns] = await Promise.all([
-    readDiffSummary(args.repoPath, args.mainBranch),
+    readDiffSummary(args.repoPath, args.mainBranch, DIFF_SUMMARY_LIMIT),
     readDoctorRuns(runLogs),
   ]);
 
@@ -371,23 +379,6 @@ async function readDoctorAttemptStatuses(
   return statuses;
 }
 
-async function readDiffSummary(repoPath: string, mainBranch: string): Promise<string> {
-  const res = await execa("git", ["diff", "--stat", `${mainBranch}...HEAD`], {
-    cwd: repoPath,
-    reject: false,
-    stdio: "pipe",
-  });
-
-  if (res.exitCode !== 0) {
-    return "<diff summary unavailable>";
-  }
-
-  const summary = res.stdout.trim();
-  if (!summary) return "<no diff summary>";
-
-  return truncate(summary, DIFF_SUMMARY_LIMIT).text;
-}
-
 function formatDoctorRunsForPrompt(runs: DoctorRunSample[]): string {
   if (runs.length === 0) {
     return "No doctor runs recorded for this run.";
@@ -443,20 +434,6 @@ function computeRunStats(runs: DoctorRunSample[]): { total: number; passes: numb
   );
 }
 
-function normalizeCompletion(
-  completion: LlmCompletionResult<DoctorValidationReport>,
-): DoctorValidationReport {
-  const raw = completion.parsed ?? parseJson(completion.text);
-  const parsed = DoctorValidationSchema.safeParse(raw);
-  if (!parsed.success) {
-    const detail = parsed.error.errors
-      .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
-      .join("; ");
-    throw new LlmError(`Doctor validator output failed schema validation: ${detail}`);
-  }
-  return parsed.data;
-}
-
 async function persistReport(
   args: DoctorValidatorArgs,
   context: ValidationContext,
@@ -464,18 +441,13 @@ async function persistReport(
   finishReason: string | null | undefined,
   stats: { total: number; passes: number; failures: number },
 ): Promise<void> {
-  const label = `${context.trigger}-${Date.now()}`;
-  const reportPath = path.join(
-    validatorsLogsDir(args.projectName, args.runId, args.paths),
-    VALIDATOR_NAME,
-    `${label}.json`,
-  );
-
-  await writeJsonFile(reportPath, {
-    project: args.projectName,
-    run_id: args.runId,
-    validator: VALIDATOR_ID,
+  await writeRunValidatorReport({
+    projectName: args.projectName,
+    runId: args.runId,
+    validatorName: VALIDATOR_NAME,
+    validatorId: VALIDATOR_ID,
     trigger: context.trigger,
+    paths: args.paths,
     result,
     meta: {
       doctor_command: context.doctorCommand,
@@ -519,39 +491,6 @@ function parseTaskDirName(name: string): { taskId: string; taskSlug: string } {
   return { taskId, taskSlug };
 }
 
-function createValidatorClient(cfg: DoctorValidatorConfig): LlmClient {
-  if (isMockLlmEnabled() || cfg.provider === "mock") {
-    return new MockLlmClient();
-  }
-
-  if (cfg.provider === "openai") {
-    return new OpenAiClient({
-      model: cfg.model,
-      defaultTemperature: cfg.temperature ?? 0,
-      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
-    });
-  }
-
-  if (cfg.provider === "anthropic") {
-    return new AnthropicClient({
-      model: cfg.model,
-      defaultTemperature: cfg.temperature ?? 0,
-      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
-      apiKey: cfg.anthropic_api_key,
-      baseURL: cfg.anthropic_base_url,
-    });
-  }
-
-  throw new Error(`Unsupported validator provider: ${cfg.provider}`);
-}
-
-function truncate(text: string, limit: number): { text: string; truncated: boolean } {
-  if (text.length <= limit) {
-    return { text, truncated: false };
-  }
-  return { text: `${text.slice(0, limit)}\n... [truncated]`, truncated: true };
-}
-
 function formatDoctorCanaryEnvVar(envVar?: string): string {
   const trimmed = envVar?.trim();
   return `${trimmed && trimmed.length > 0 ? trimmed : "ORCH_CANARY"}=1`;
@@ -589,34 +528,4 @@ function normalizeDoctorCanary(canary?: DoctorCanaryResult): DoctorCanaryResult 
     ...canary,
     output: truncate(canary.output, DOCTOR_CANARY_LOG_LIMIT).text,
   };
-}
-
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new LlmError("Validator returned invalid JSON.", err);
-  }
-}
-
-function secondsToMs(value?: number): number | undefined {
-  if (value === undefined) return undefined;
-  return value * 1000;
-}
-
-function safeParseJson(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }

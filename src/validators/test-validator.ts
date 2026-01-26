@@ -1,34 +1,39 @@
 import path from "node:path";
 
-import { execa } from "execa";
 import fse from "fs-extra";
 import { z } from "zod";
 
 import type { ValidatorConfig } from "../core/config.js";
 import { JsonlLogger, logOrchestratorEvent } from "../core/logger.js";
 import type { PathsContext } from "../core/paths.js";
-import { validatorLogPath, validatorReportPath } from "../core/paths.js";
+import { validatorLogPath } from "../core/paths.js";
 import { renderPromptTemplate } from "../core/prompts.js";
 import { resolveTaskSpecPath } from "../core/task-layout.js";
 import type { TaskSpec } from "../core/task-manifest.js";
-import { writeJsonFile } from "../core/utils.js";
-import type { LlmClient, LlmCompletionResult } from "../llm/client.js";
-import { LlmError } from "../llm/client.js";
-import { AnthropicClient } from "../llm/anthropic.js";
-import { OpenAiClient } from "../llm/openai.js";
 import { listChangedFiles } from "../git/changes.js";
-import { MockLlmClient, isMockLlmEnabled } from "../llm/mock.js";
+import type { LlmClient } from "../llm/client.js";
+
+import { createValidatorClient } from "./lib/client.js";
+import {
+  readDiffSummary,
+  readFileSamples,
+  readTaskSpec,
+  writeTaskValidatorReport,
+} from "./lib/io.js";
+import {
+  formatError,
+  formatFilesForPrompt,
+  normalizeCompletion,
+  secondsToMs,
+  truncate,
+  uniq,
+} from "./lib/normalize.js";
+import type { FileSample } from "./lib/types.js";
+
 
 // =============================================================================
 // TYPES
 // =============================================================================
-
-type FileSample = {
-  path: string;
-  content: string;
-  truncated: boolean;
-};
-
 type ValidationContext = {
   taskSpec: string;
   changedTests: FileSample[];
@@ -55,6 +60,7 @@ export type TestValidatorArgs = {
   llmClient?: LlmClient;
   paths?: PathsContext;
 };
+
 
 // =============================================================================
 // CONSTANTS
@@ -118,6 +124,7 @@ const CODE_SNIPPET_LIMIT = 3_000;
 const TASK_SPEC_LIMIT = 4_000;
 const DIFF_SUMMARY_LIMIT = 2_000;
 const TEST_OUTPUT_LIMIT = 4_000;
+
 
 // =============================================================================
 // PUBLIC API
@@ -195,7 +202,7 @@ export async function runTestValidator(
       timeoutMs: secondsToMs(cfg.timeout_seconds),
     });
 
-    const result = normalizeCompletion(completion);
+    const result = normalizeCompletion(completion, TestValidationSchema, "Test");
 
     validatorLog.log({
       type: "validation.analysis",
@@ -238,6 +245,7 @@ export async function runTestValidator(
   }
 }
 
+
 // =============================================================================
 // INTERNALS
 // =============================================================================
@@ -257,8 +265,8 @@ async function buildValidationContext(args: TestValidatorArgs): Promise<Validati
     taskDirName: args.task.taskDirName,
   });
   const [taskSpec, diffSummary, testOutput] = await Promise.all([
-    readTaskSpec(taskSpecPath),
-    readDiffSummary(args.workspacePath, args.mainBranch),
+    readTaskSpec(taskSpecPath, TASK_SPEC_LIMIT),
+    readDiffSummary(args.workspacePath, args.mainBranch, DIFF_SUMMARY_LIMIT),
     readLatestDoctorOutput(args.taskLogsDir),
   ]);
 
@@ -276,41 +284,21 @@ async function buildValidationContext(args: TestValidatorArgs): Promise<Validati
   };
 }
 
-function normalizeCompletion(
-  completion: LlmCompletionResult<TestValidationReport>,
-): TestValidationReport {
-  const raw = completion.parsed ?? parseJson(completion.text);
-  const parsed = TestValidationSchema.safeParse(raw);
-  if (!parsed.success) {
-    const detail = parsed.error.errors
-      .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
-      .join("; ");
-    throw new LlmError(`Test validator output failed schema validation: ${detail}`);
-  }
-  return parsed.data;
-}
-
 async function persistReport(
   args: TestValidatorArgs,
   context: ValidationContext,
   result: TestValidationReport,
   finishReason?: string | null,
 ): Promise<void> {
-  const reportPath = validatorReportPath(
-    args.projectName,
-    args.runId,
-    VALIDATOR_NAME,
-    args.task.manifest.id,
-    args.taskSlug,
-    args.paths,
-  );
-
-  await writeJsonFile(reportPath, {
-    task_id: args.task.manifest.id,
-    task_name: args.task.manifest.name,
-    task_slug: args.taskSlug,
-    validator: VALIDATOR_ID,
-    run_id: args.runId,
+  await writeTaskValidatorReport({
+    projectName: args.projectName,
+    runId: args.runId,
+    validatorName: VALIDATOR_NAME,
+    validatorId: VALIDATOR_ID,
+    taskId: args.task.manifest.id,
+    taskName: args.task.manifest.name,
+    taskSlug: args.taskSlug,
+    paths: args.paths,
     result,
     meta: {
       finish_reason: finishReason ?? null,
@@ -320,53 +308,6 @@ async function persistReport(
       test_output: context.testOutput,
     },
   });
-}
-
-async function readFileSamples(
-  baseDir: string,
-  relativePaths: string[],
-  limit: number,
-): Promise<FileSample[]> {
-  const unique = uniq(relativePaths);
-  const samples: FileSample[] = [];
-
-  for (const rel of unique) {
-    const abs = path.join(baseDir, rel);
-    const stat = await fse.stat(abs).catch(() => null);
-    if (!stat || !stat.isFile()) continue;
-
-    const raw = await fse.readFile(abs, "utf8");
-    const { text, truncated } = truncate(raw, limit);
-    samples.push({ path: rel, content: text, truncated });
-  }
-
-  return samples;
-}
-
-async function readTaskSpec(specPath: string): Promise<string> {
-  try {
-    const raw = await fse.readFile(specPath, "utf8");
-    return truncate(raw, TASK_SPEC_LIMIT).text;
-  } catch {
-    return "<task spec unavailable>";
-  }
-}
-
-async function readDiffSummary(workspacePath: string, mainBranch: string): Promise<string> {
-  const res = await execa("git", ["diff", "--stat", `${mainBranch}...HEAD`], {
-    cwd: workspacePath,
-    reject: false,
-    stdio: "pipe",
-  });
-
-  if (res.exitCode !== 0) {
-    return "<diff summary unavailable>";
-  }
-
-  const summary = res.stdout.trim();
-  if (!summary) return "<no diff summary>";
-
-  return truncate(summary, DIFF_SUMMARY_LIMIT).text;
 }
 
 async function readLatestDoctorOutput(taskLogsDir: string): Promise<string> {
@@ -387,52 +328,6 @@ async function readLatestDoctorOutput(taskLogsDir: string): Promise<string> {
   return truncate(raw.trim(), TEST_OUTPUT_LIMIT).text || "<empty doctor log>";
 }
 
-function formatFilesForPrompt(files: FileSample[]): string {
-  if (files.length === 0) {
-    return "None";
-  }
-
-  return files
-    .map((file) => {
-      const suffix = file.truncated ? "\n[truncated]" : "";
-      return `### ${file.path}\n\`\`\`\n${file.content}\n\`\`\`${suffix}`;
-    })
-    .join("\n\n");
-}
-
-function createValidatorClient(cfg: ValidatorConfig): LlmClient {
-  if (isMockLlmEnabled() || cfg.provider === "mock") {
-    return new MockLlmClient();
-  }
-
-  if (cfg.provider === "openai") {
-    return new OpenAiClient({
-      model: cfg.model,
-      defaultTemperature: cfg.temperature ?? 0,
-      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
-    });
-  }
-
-  if (cfg.provider === "anthropic") {
-    return new AnthropicClient({
-      model: cfg.model,
-      defaultTemperature: cfg.temperature ?? 0,
-      defaultTimeoutMs: secondsToMs(cfg.timeout_seconds),
-      apiKey: cfg.anthropic_api_key,
-      baseURL: cfg.anthropic_base_url,
-    });
-  }
-
-  throw new Error(`Unsupported validator provider: ${cfg.provider}`);
-}
-
-function truncate(text: string, limit: number): { text: string; truncated: boolean } {
-  if (text.length <= limit) {
-    return { text, truncated: false };
-  }
-  return { text: `${text.slice(0, limit)}\n... [truncated]`, truncated: true };
-}
-
 function isTestFile(file: string): boolean {
   const normalized = file.toLowerCase();
   const segments = normalized.split(/[\\/]/);
@@ -449,26 +344,4 @@ function isTestFile(file: string): boolean {
     normalized.endsWith("_spec.ts") ||
     normalized.endsWith("_spec.js")
   );
-}
-
-function uniq(values: string[]): string[] {
-  return Array.from(new Set(values)).filter((v) => v.length > 0);
-}
-
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new LlmError("Validator returned invalid JSON.", err);
-  }
-}
-
-function secondsToMs(value?: number): number | undefined {
-  if (value === undefined) return undefined;
-  return value * 1000;
-}
-
-function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
