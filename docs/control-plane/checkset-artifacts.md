@@ -5,10 +5,10 @@ When the checkset cannot be computed safely, the system falls back to the global
 
 ## Config
 
-Add optional mapping under `control_plane.checks`:
+Add optional mapping under `control_graph.checks`:
 
 ```yaml
-control_plane:
+control_graph:
   checks:
     mode: report # off | report | enforce
     commands_by_component:

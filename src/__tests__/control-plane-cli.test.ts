@@ -49,6 +49,14 @@ function collectStdout(writeSpy: ReturnType<typeof vi.spyOn>): string {
     .join("");
 }
 
+function collectStderr(writeSpy: ReturnType<typeof vi.spyOn>): string {
+  return writeSpy.mock.calls
+    .map(([chunk]: [string | Uint8Array]) =>
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+    )
+    .join("");
+}
+
 function installExitOverride(command: Command): void {
   command.exitOverride();
 
@@ -111,7 +119,7 @@ async function commitPolicyEvalChange(repoDir: string): Promise<void> {
 // TESTS
 // =============================================================================
 
-describe("control-plane CLI", () => {
+describe("control graph CLI", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     process.exitCode = 0;
@@ -122,13 +130,47 @@ describe("control-plane CLI", () => {
     tempDirs.length = 0;
   });
 
-  it("renders help for the cp alias", async () => {
+  it("renders help for the cg alias", async () => {
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runCli(["node", "mycelium", "cg", "--help"], { allowHelp: true });
+
+    const output = collectStdout(writeSpy);
+    expect(output).toContain("control-graph");
+  });
+
+  it("warns when using the deprecated cp alias", async () => {
+    const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await runCli(["node", "mycelium", "cp", "--help"], { allowHelp: true });
 
+    const output = collectStderr(writeSpy);
+    expect(output).toContain("deprecated");
+    expect(output).toContain("mycelium cg");
+  });
+
+  it("runs cg search with max and glob filters", async () => {
+    const repoDir = await createTempRepoFromFixture();
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runCli([
+      "node",
+      "mycelium",
+      "cg",
+      "search",
+      "UserTracker",
+      "--repo",
+      repoDir,
+      "--glob",
+      "apps/web/src/**",
+      "--max",
+      "1",
+    ]);
+
     const output = collectStdout(writeSpy);
-    expect(output).toContain("control-plane");
+    const lines = output.split("\n").filter(Boolean);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("apps/web/src/index.ts");
   });
 
   it("returns a JSON error when --no-build is set", async () => {
@@ -138,7 +180,7 @@ describe("control-plane CLI", () => {
     await runCli([
       "node",
       "mycelium",
-      "cp",
+      "cg",
       "components",
       "list",
       "--json",
@@ -163,7 +205,7 @@ describe("control-plane CLI", () => {
     const repoDir = await createTempRepoFromFixture();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await runCli(["node", "mycelium", "cp", "components", "list", "--json", "--repo", repoDir]);
+    await runCli(["node", "mycelium", "cg", "components", "list", "--json", "--repo", repoDir]);
 
     const jsonLine = logSpy.mock.calls.map((call) => call.join(" ")).pop() ?? "";
     const payload = JSON.parse(jsonLine) as { ok: boolean; result?: unknown };
@@ -182,7 +224,7 @@ describe("control-plane CLI", () => {
     await runCli([
       "node",
       "mycelium",
-      "cp",
+      "cg",
       "owner",
       "apps/web/src/index.ts",
       "--json",
@@ -209,7 +251,7 @@ describe("control-plane CLI", () => {
     await runCli([
       "node",
       "mycelium",
-      "cp",
+      "cg",
       "policy",
       "eval",
       "--json",

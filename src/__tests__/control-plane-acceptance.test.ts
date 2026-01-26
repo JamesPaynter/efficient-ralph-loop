@@ -122,7 +122,7 @@ function createControlPlaneRunner(
 
   return async function runJson<T>(args: string[]): Promise<JsonEnvelope<T>> {
     logSpy.mockClear();
-    await runCli(["node", "mycelium", "cp", ...args, "--json", "--repo", repoDir, "--no-build"]);
+    await runCli(["node", "mycelium", "cg", ...args, "--json", "--repo", repoDir, "--no-build"]);
 
     return parseLastJsonLine<JsonEnvelope<T>>(logSpy);
   };

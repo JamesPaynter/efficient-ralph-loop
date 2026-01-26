@@ -166,6 +166,6 @@ function emitSymbolWarnings(warnings: string[]): void {
   }
 
   for (const warning of warnings) {
-    console.warn(`[control-plane] ${warning}`);
+    console.warn(`[control-graph] ${warning}`);
   }
 }

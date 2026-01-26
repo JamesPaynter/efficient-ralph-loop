@@ -716,7 +716,7 @@ export function createMapView({ appState } = {}) {
     setLegendVisibility(false);
     showMessage({
       title: "Loading map",
-      copy: "Fetching the control-plane graph snapshot.",
+      copy: "Fetching the control graph snapshot.",
       detail: "",
     });
   }
@@ -747,10 +747,10 @@ export function createMapView({ appState } = {}) {
   }
 
   function renderModelMissingPrompt(baseSha) {
-    const command = baseSha ? `mycelium cp build --base-sha ${baseSha}` : "mycelium cp build";
+    const command = baseSha ? `mycelium cg build --base-sha ${baseSha}` : "mycelium cg build";
     showMessage({
-      title: "No control-plane model found.",
-      copy: "Run the control-plane build to render this map.",
+      title: "No control graph model found.",
+      copy: "Run the control graph build to render this map.",
       detail: command,
       detailIsCommand: true,
     });
@@ -777,7 +777,7 @@ export function createMapView({ appState } = {}) {
       setLegendVisibility(false);
       showMessage({
         title: "No components found",
-        copy: "The control-plane model has no components to visualize.",
+        copy: "The control graph model has no components to visualize.",
         detail: "",
       });
       return;
@@ -1175,12 +1175,12 @@ export function createMapView({ appState } = {}) {
 
     setCommandValue(
       elements.inspector.commands.showComponent,
-      `mycelium cp components show ${selectedId}`,
+      `mycelium cg components show ${selectedId}`,
     );
-    setCommandValue(elements.inspector.commands.showDependencies, `mycelium cp deps ${selectedId}`);
+    setCommandValue(elements.inspector.commands.showDependencies, `mycelium cg deps ${selectedId}`);
     setCommandValue(
       elements.inspector.commands.showReverseDependencies,
-      `mycelium cp rdeps ${selectedId}`,
+      `mycelium cg rdeps ${selectedId}`,
     );
 
     setInspectorOpen(true);

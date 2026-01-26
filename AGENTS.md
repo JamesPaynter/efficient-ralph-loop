@@ -82,18 +82,18 @@ Shared code:
 
 ## Repo navigation tools
 
-Prefer `mycelium cp` Control Plane navigation queries before grepping when you need
+Prefer `mycelium cg` Control Graph navigation queries before grepping when you need
 ownership, dependencies, blast radius, or symbol info.
 
 Command cheat sheet:
 
 ```bash
-mycelium cp components list
-mycelium cp owner <path>
-mycelium cp blast <path>
-mycelium cp symbols find <query>
-mycelium cp symbols def <symbol>
-mycelium cp symbols refs <symbol>
+mycelium cg components list
+mycelium cg owner <path>
+mycelium cg blast <path>
+mycelium cg symbols find <query>
+mycelium cg symbols def <symbol>
+mycelium cg symbols refs <symbol>
 ```
 
 

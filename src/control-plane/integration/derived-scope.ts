@@ -346,7 +346,7 @@ function buildDerivedWritePaths(input: {
 
   if (missingComponents.length > 0) {
     input.notes.push(
-      `Component resources missing from control plane model: ${missingComponents.join(", ")}`,
+      `Component resources missing from control graph model: ${missingComponents.join(", ")}`,
     );
   }
 

@@ -45,5 +45,5 @@ Use the summary to compare derived lock modes, scope enforcement impact, and val
 - `derived_lock_mode_enabled`: true when the effective lock mode is `derived`.
 - `avg_batch_size`: average number of tasks per scheduled batch.
 
-When the control plane is disabled, derived-scope/blast metrics remain present but will be 0.
+When the control graph is disabled, derived-scope/blast metrics remain present but will be 0.
 Validation timing and batch size still reflect the run.

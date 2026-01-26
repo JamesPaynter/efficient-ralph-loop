@@ -129,7 +129,7 @@ describe("control-plane TypeScript symbols", () => {
     await runCli([
       "node",
       "mycelium",
-      "cp",
+      "cg",
       "symbols",
       "find",
       "buildCli",
@@ -153,7 +153,7 @@ describe("control-plane TypeScript symbols", () => {
     await runCli([
       "node",
       "mycelium",
-      "cp",
+      "cg",
       "symbols",
       "def",
       symbolId,

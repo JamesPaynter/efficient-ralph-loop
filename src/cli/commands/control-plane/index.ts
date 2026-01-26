@@ -64,9 +64,12 @@ import {
 import { registerBlastRadiusCommand } from "./blast-radius.js";
 import { registerComponentsCommands } from "./components.js";
 import { registerDependencyCommands } from "./deps.js";
+import { registerSearchCommand } from "./search.js";
 
 const MODEL_NOT_BUILT_MESSAGE =
-  "Control plane model not built. Run `mycelium cp build` to generate it.";
+  "Control graph model not built. Run `mycelium cg build` to generate it.";
+const CONTROL_PLANE_DEPRECATION_WARNING = "deprecated: use `mycelium cg` (control graph).";
+const DEPRECATED_CONTROL_PLANE_ALIASES = new Set(["cp", "control-plane"]);
 
 // =============================================================================
 // TYPES
@@ -101,12 +104,13 @@ export type ControlPlaneCommandContext = {
 // =============================================================================
 
 export function registerControlPlaneCommand(program: Command): void {
-  const controlPlane = program
-    .command("control-plane")
-    .alias("cp")
-    .description("Repository navigation surface for agents");
+  const controlGraph = program
+    .command("control-graph")
+    .aliases(["cg", "control-plane", "cp"])
+    .description("Control graph navigation surface for agents");
 
-  registerControlPlaneFlags(controlPlane);
+  registerControlPlaneFlags(controlGraph);
+  registerControlPlaneDeprecationWarnings(program);
 
   const sharedContext: ControlPlaneCommandContext = {
     modelNotBuiltMessage: MODEL_NOT_BUILT_MESSAGE,
@@ -118,7 +122,7 @@ export function registerControlPlaneCommand(program: Command): void {
     resolveModelStoreError,
   };
 
-  controlPlane
+  controlGraph
     .command("build")
     .description("Build the repository navigation model")
     .option("--force", "Rebuild the navigation model even if cached", false)
@@ -126,18 +130,19 @@ export function registerControlPlaneCommand(program: Command): void {
       await handleControlPlaneBuild(opts, command);
     });
 
-  controlPlane
+  controlGraph
     .command("info")
     .description("Show navigation model metadata")
     .action(async (_opts, command) => {
       await handleControlPlaneInfo(command);
     });
 
-  registerComponentsCommands(controlPlane, sharedContext);
-  registerDependencyCommands(controlPlane, sharedContext);
-  registerBlastRadiusCommand(controlPlane, sharedContext);
+  registerComponentsCommands(controlGraph, sharedContext);
+  registerDependencyCommands(controlGraph, sharedContext);
+  registerBlastRadiusCommand(controlGraph, sharedContext);
+  registerSearchCommand(controlGraph, sharedContext);
 
-  const policy = controlPlane.command("policy").description("Policy evaluation queries");
+  const policy = controlGraph.command("policy").description("Policy evaluation queries");
 
   policy
     .command("eval")
@@ -150,7 +155,7 @@ export function registerControlPlaneCommand(program: Command): void {
       await handlePolicyEval(opts as PolicyEvalOptions, command);
     });
 
-  const symbols = controlPlane.command("symbols").description("Symbol navigation queries");
+  const symbols = controlGraph.command("symbols").description("Symbol navigation queries");
 
   symbols
     .command("find")
@@ -197,6 +202,78 @@ function resolveCommandContext(command: Command): ControlPlaneCommandRuntimeCont
     flags,
     output: { useJson: flags.useJson, prettyJson: flags.prettyJson },
   };
+}
+
+// =============================================================================
+// DEPRECATION WARNINGS
+// =============================================================================
+
+function registerControlPlaneDeprecationWarnings(program: Command): void {
+  program.hook("preSubcommand", (root, subCommand) => {
+    if (subCommand.name() !== "control-graph") {
+      return;
+    }
+
+    if (!shouldWarnForDeprecatedControlPlaneAlias(resolveRawArgs(root))) {
+      return;
+    }
+
+    emitControlPlaneDeprecationWarning();
+  });
+}
+
+function emitControlPlaneDeprecationWarning(): void {
+  process.stderr.write(`${CONTROL_PLANE_DEPRECATION_WARNING}\n`);
+}
+
+function shouldWarnForDeprecatedControlPlaneAlias(rawArgs: string[]): boolean {
+  const topLevel = resolveTopLevelCommandName(rawArgs);
+  return topLevel !== null && DEPRECATED_CONTROL_PLANE_ALIASES.has(topLevel);
+}
+
+function resolveTopLevelCommandName(rawArgs: string[]): string | null {
+  const userArgs = rawArgs.length > 2 ? rawArgs.slice(2) : [];
+
+  for (let index = 0; index < userArgs.length; index += 1) {
+    const arg = userArgs[index];
+
+    if (arg === "--") {
+      return null;
+    }
+
+    if (arg.startsWith("-")) {
+      if (arg === "--config") {
+        index += 1;
+        continue;
+      }
+
+      if (arg.startsWith("--config=")) {
+        continue;
+      }
+
+      if (
+        arg === "-v" ||
+        arg === "--verbose" ||
+        arg === "-V" ||
+        arg === "--version" ||
+        arg === "-h" ||
+        arg === "--help"
+      ) {
+        continue;
+      }
+
+      continue;
+    }
+
+    return arg;
+  }
+
+  return null;
+}
+
+function resolveRawArgs(command: Command): string[] {
+  const rawArgs = (command as Command & { rawArgs?: string[] }).rawArgs;
+  return Array.isArray(rawArgs) ? rawArgs : [];
 }
 
 // =============================================================================
@@ -253,7 +330,7 @@ function resolveModelStoreError(error: unknown): ControlPlaneJsonError {
 
   return {
     code: CONTROL_PLANE_ERROR_CODES.modelStoreError,
-    message: "Control plane command failed.",
+    message: "Control graph command failed.",
     details: null,
   };
 }

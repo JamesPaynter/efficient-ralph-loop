@@ -225,4 +225,34 @@ worker:
       warn_on_unexpected_pass: true,
     });
   });
+
+  it("maps control_graph to the control_plane config", () => {
+    const configPath = writeConfig(
+      "control-graph.yaml",
+      `
+repo_path: /tmp/repo
+main_branch: development-codex
+doctor: "npm test"
+resources:
+  - name: backend
+    paths: ["server/*"]
+planner:
+  provider: openai
+  model: o3
+worker:
+  model: gpt-5.1-codex-max
+control_graph:
+  enabled: true
+  lock_mode: derived
+  checks:
+    mode: enforce
+`,
+    );
+
+    const config = loadProjectConfig(configPath);
+
+    expect(config.control_plane.enabled).toBe(true);
+    expect(config.control_plane.lock_mode).toBe("derived");
+    expect(config.control_plane.checks.mode).toBe("enforce");
+  });
 });
