@@ -4,7 +4,7 @@
 
 import path from "node:path";
 
-import type { ZodType } from "zod";
+import type { output, ZodTypeAny } from "zod";
 
 import { LlmError, type LlmCompletionResult } from "../../llm/client.js";
 
@@ -15,11 +15,11 @@ import type { FileSample, TruncateResult } from "./types.js";
 // COMPLETION NORMALIZATION
 // =============================================================================
 
-export function normalizeCompletion<TParsed>(
-  completion: LlmCompletionResult<TParsed>,
-  schema: ZodType<TParsed>,
+export function normalizeCompletion<TSchema extends ZodTypeAny>(
+  completion: LlmCompletionResult<output<TSchema>>,
+  schema: TSchema,
   validatorLabel: string,
-): TParsed {
+): output<TSchema> {
   const raw = completion.parsed ?? parseJson(completion.text);
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
