@@ -9,6 +9,8 @@ import {
   buildRunContextBase,
 } from "../app/orchestrator/run-context-builder.js";
 import type { ControlPlaneRunConfig } from "../app/orchestrator/run-context.js";
+import { BudgetTracker } from "../app/orchestrator/budgets/budget-tracker.js";
+import { CompliancePipeline } from "../app/orchestrator/compliance/compliance-pipeline.js";
 import { runEngine } from "../app/orchestrator/run-engine.js";
 import type { Vcs } from "../app/orchestrator/vcs/vcs.js";
 import { formatErrorMessage, normalizeAbortReason } from "../app/orchestrator/helpers/errors.js";
@@ -34,11 +36,9 @@ import type {
   ControlPlaneLockMode,
   ControlPlaneResourcesMode,
   ControlPlaneScopeMode,
-  ManifestEnforcementPolicy,
   ProjectConfig,
   ResourceConfig,
 } from "./config.js";
-import { detectBudgetBreaches, parseTaskTokenUsage, recomputeRunUsage, type TaskUsageUpdate } from "./budgets.js";
 import {
   JsonlLogger,
   logOrchestratorEvent,
@@ -67,7 +67,6 @@ import {
   orchestratorHome,
   orchestratorLogPath,
   taskEventsLogPath,
-  taskComplianceReportPath,
   taskBlastReportPath,
   taskChecksetReportPath,
   taskLockDerivationReportPath,
@@ -86,7 +85,6 @@ import {
   markTaskComplete,
   markTaskValidated,
   markTaskFailed,
-  markTaskRescopeRequired,
   resetTaskToPending,
   startBatch,
   type CheckpointCommit,
@@ -100,11 +98,8 @@ import { prepareTaskWorkspace, removeTaskWorkspace } from "./workspaces.js";
 import { type DoctorCanaryResult } from "../validators/doctor-validator.js";
 import { loadWorkerState, type WorkerCheckpoint } from "../../worker/state.js";
 import {
-  runManifestCompliance,
-  type ManifestComplianceResult,
   type ResourceOwnershipResolver,
 } from "./manifest-compliance.js";
-import { computeRescopeFromCompliance } from "./manifest-rescope.js";
 import { buildControlPlaneModel } from "../control-plane/model/build.js";
 import { ControlPlaneStore } from "../control-plane/storage.js";
 import type { ControlPlaneModel } from "../control-plane/model/schema.js";
@@ -596,19 +591,6 @@ function computeTaskPolicyDecision(input: {
   };
 }
 
-function resolveCompliancePolicyForTier(input: {
-  basePolicy: ManifestEnforcementPolicy;
-  tier?: PolicyDecision["tier"];
-}): ManifestEnforcementPolicy {
-  if (input.basePolicy === "off" || input.basePolicy === "block") {
-    return input.basePolicy;
-  }
-
-  return (input.tier ?? 0) >= 2 ? "block" : "warn";
-}
-
-
-
 // =============================================================================
 // RUN METRICS
 // =============================================================================
@@ -684,19 +666,6 @@ function countFallbackRepoRoot(
   }
 
   return count;
-}
-
-function recordScopeViolations(metrics: RunMetrics, result: ManifestComplianceResult): void {
-  if (result.violations.length === 0) return;
-
-  if (result.status === "warn") {
-    metrics.scopeViolations.warnCount += result.violations.length;
-    return;
-  }
-
-  if (result.status === "block") {
-    metrics.scopeViolations.blockCount += result.violations.length;
-  }
 }
 
 function recordBlastRadius(
@@ -949,8 +918,6 @@ async function runProjectLegacy(
 
   const lockMode = resolveEffectiveLockMode(controlPlaneConfig);
   const scopeComplianceMode = resolveScopeComplianceMode(controlPlaneConfig);
-  const shouldEnforceCompliance = scopeComplianceMode === "enforce";
-  const compliancePolicy = scopeComplianceMode === "off" ? "off" : manifestPolicy;
 
   const resourceContext = await buildResourceResolutionContext({
     repoPath,
@@ -1052,6 +1019,28 @@ async function runProjectLegacy(
       recordDoctorDuration(runMetrics, durationMs);
     },
   });
+  const compliancePipeline = new CompliancePipeline({
+    projectName,
+    runId,
+    tasksRoot: tasksRootAbs,
+    mainBranch: config.main_branch,
+    resourceContext: {
+      resources: resourceContext.effectiveResources,
+      staticResources: resourceContext.staticResources,
+      fallbackResource: resourceContext.fallbackResource,
+      ownerResolver: resourceContext.ownerResolver,
+      ownershipResolver: resourceContext.ownershipResolver,
+      resourcesMode: resourceContext.resourcesMode,
+    },
+    orchestratorLog: orchLog,
+  });
+  const budgetTracker = new BudgetTracker({
+    projectName,
+    runId,
+    costPer1kTokens,
+    budgets: config.budgets,
+    orchestratorLog: orchLog,
+  });
 
   logOrchestratorEvent(orchLog, "run.tasks_loaded", {
     total_tasks: tasks.length,
@@ -1065,48 +1054,7 @@ async function runProjectLegacy(
     orchestratorLogger: orchLog,
   });
 
-  const refreshTaskUsage = (taskId: string, taskSlug: string): TaskUsageUpdate | null => {
-    const taskState = state.tasks[taskId];
-    if (!taskState) return null;
-
-    const previousTokens = taskState.tokens_used ?? 0;
-    const previousCost = taskState.estimated_cost ?? 0;
-    const eventsPath = taskEventsLogPath(projectName, runId, taskId, taskSlug);
-    const usage = parseTaskTokenUsage(eventsPath, costPer1kTokens);
-
-    taskState.usage_by_attempt = usage.attempts;
-    taskState.tokens_used = usage.tokensUsed;
-    taskState.estimated_cost = usage.estimatedCost;
-
-    return { taskId, previousTokens, previousCost, usage };
-  };
-
   // Create or resume run state
-  const backfillUsageFromLogs = (): boolean => {
-    let updated = false;
-    const beforeTokens = state.tokens_used ?? 0;
-    const beforeCost = state.estimated_cost ?? 0;
-    for (const task of tasks) {
-      const taskState = state.tasks[task.manifest.id];
-      if (!taskState) continue;
-
-      const hasUsage =
-        (taskState.tokens_used ?? 0) > 0 ||
-        (taskState.usage_by_attempt && taskState.usage_by_attempt.length > 0);
-      if (hasUsage) continue;
-
-      const update = refreshTaskUsage(task.manifest.id, task.slug);
-      if (update) {
-        updated = true;
-      }
-    }
-
-    const totals = recomputeRunUsage(state);
-    if (totals.tokensUsed !== beforeTokens || totals.estimatedCost !== beforeCost) {
-      updated = true;
-    }
-    return updated;
-  };
   // Ensure new tasks found in the manifest are tracked for this run.
   for (const t of tasks) {
     if (!state.tasks[t.manifest.id]) {
@@ -1125,7 +1073,7 @@ async function runProjectLegacy(
   await stateStore.save(state);
 
   if (hadExistingState) {
-    const usageBackfilled = backfillUsageFromLogs();
+    const usageBackfilled = budgetTracker.backfillUsageFromLogs({ tasks, state });
     if (usageBackfilled) {
       await stateStore.save(state);
     }
@@ -1391,34 +1339,6 @@ async function runProjectLegacy(
     }
   };
 
-  const logBudgetBreaches = (
-    breaches: ReturnType<typeof detectBudgetBreaches>,
-  ): "budget_block" | undefined => {
-    let stop: "budget_block" | undefined;
-
-    for (const breach of breaches) {
-      const payload: JsonObject = {
-        scope: breach.scope,
-        kind: breach.kind,
-        limit: breach.limit,
-        value: breach.value,
-        mode: breach.mode,
-      };
-      if (breach.taskId) {
-        payload.task_id = breach.taskId;
-      }
-
-      const eventType = breach.mode === "block" ? "budget.block" : "budget.warn";
-      logOrchestratorEvent(orchLog, eventType, payload);
-
-      if (breach.mode === "block") {
-        stop = "budget_block";
-      }
-    }
-
-    return stop;
-  };
-
   const buildReadyForValidationSummaries = (batchTasks: TaskSpec[]): TaskSuccessResult[] => {
     const summaries: TaskSuccessResult[] = [];
     for (const task of batchTasks) {
@@ -1626,63 +1546,6 @@ async function runProjectLegacy(
     };
   };
 
-  const logComplianceEvents = (args: {
-    taskId: string;
-    taskSlug: string;
-    policy: ManifestEnforcementPolicy;
-    scopeMode: ControlPlaneScopeMode;
-    reportPath: string;
-    result: ManifestComplianceResult;
-  }): void => {
-    recordScopeViolations(runMetrics, args.result);
-    const basePayload = {
-      task_slug: args.taskSlug,
-      policy: args.policy,
-      scope_mode: args.scopeMode,
-      status: args.result.status,
-      report_path: args.reportPath,
-      changed_files: args.result.changedFiles.length,
-      violations: args.result.violations.length,
-    };
-
-    const eventType =
-      args.result.status === "skipped"
-        ? "manifest.compliance.skip"
-        : args.result.violations.length === 0
-          ? "manifest.compliance.pass"
-          : args.result.status === "block"
-            ? "manifest.compliance.block"
-            : "manifest.compliance.warn";
-
-    logOrchestratorEvent(orchLog, eventType, { taskId: args.taskId, ...basePayload });
-
-    if (args.result.violations.length === 0) return;
-
-    for (const violation of args.result.violations) {
-      logOrchestratorEvent(orchLog, "access.requested", {
-        taskId: args.taskId,
-        task_slug: args.taskSlug,
-        file: violation.path,
-        resources: violation.resources,
-        reasons: violation.reasons,
-        ...(violation.component_owners
-          ? { component_owners: violation.component_owners }
-          : {}),
-        ...(violation.guidance ? { guidance: violation.guidance } : {}),
-        policy: args.policy,
-        enforcement: args.result.status,
-        report_path: args.reportPath,
-      });
-    }
-  };
-
-  const describeManifestViolations = (result: ManifestComplianceResult): string => {
-    const count = result.violations.length;
-    const example = result.violations[0]?.path;
-    const detail = example ? ` (example: ${example})` : "";
-    return `${count} undeclared access request(s)${detail}`;
-  };
-
   const finalizeBatch = async (params: {
     batchId: number;
     batchTasks: TaskSpec[];
@@ -1693,18 +1556,13 @@ async function runProjectLegacy(
     | "budget_block"
     | undefined
   > => {
-    const runUsageBefore = {
-      tokensUsed: state.tokens_used ?? 0,
-      estimatedCost: state.estimated_cost ?? 0,
-    };
-    const usageUpdates: TaskUsageUpdate[] = [];
-    for (const result of params.results) {
-      const update = refreshTaskUsage(result.taskId, result.taskSlug);
-      if (update) {
-        usageUpdates.push(update);
-      }
-    }
-    const runUsageAfter = recomputeRunUsage(state);
+    const usageSnapshot = budgetTracker.recordUsageUpdates({
+      state,
+      taskResults: params.results.map((result) => ({
+        taskId: result.taskId,
+        taskSlug: result.taskSlug,
+      })),
+    });
 
     const hadPendingResets = params.results.some((r) => !r.success && r.resetToPending);
     let doctorCanaryResult: DoctorCanaryResult | undefined;
@@ -1762,83 +1620,22 @@ async function runProjectLegacy(
         continue;
       }
 
-      const complianceReportPath = taskComplianceReportPath(
-        projectName,
-        runId,
-        r.taskId,
-        r.taskSlug,
-      );
       const policyDecision = policyDecisions.get(r.taskId);
-      const effectiveCompliancePolicy = resolveCompliancePolicyForTier({
-        basePolicy: compliancePolicy,
-        tier: policyDecision?.tier,
-      });
-      const compliance = await runManifestCompliance({
-        workspacePath: r.workspace,
-        mainBranch: config.main_branch,
-        manifest: taskSpec.manifest,
-        resources: resourceContext.effectiveResources,
-        staticResources: resourceContext.staticResources,
-        fallbackResource: resourceContext.fallbackResource,
-        ownerResolver: resourceContext.ownerResolver,
-        ownershipResolver: resourceContext.ownershipResolver,
-        resourcesMode: resourceContext.resourcesMode,
-        policy: effectiveCompliancePolicy,
-        reportPath: complianceReportPath,
-      });
-
-      logComplianceEvents({
-        taskId: r.taskId,
-        taskSlug: r.taskSlug,
-        policy: effectiveCompliancePolicy,
+      const complianceOutcome = await compliancePipeline.runForTask({
+        task: taskSpec,
+        taskResult: {
+          taskId: r.taskId,
+          taskSlug: r.taskSlug,
+          workspacePath: r.workspace,
+        },
+        state,
         scopeMode: scopeComplianceMode,
-        reportPath: complianceReportPath,
-        result: compliance,
+        manifestPolicy,
+        policyTier: policyDecision?.tier,
       });
 
-      if (compliance.violations.length > 0 && shouldEnforceCompliance) {
-        const violationSummary = describeManifestViolations(compliance);
-        const rescopeReason = `Rescope required: ${violationSummary}`;
-        markTaskRescopeRequired(state, r.taskId, rescopeReason);
-        logOrchestratorEvent(orchLog, "task.rescope.start", {
-          taskId: r.taskId,
-          violations: compliance.violations.length,
-          report_path: complianceReportPath,
-          policy: effectiveCompliancePolicy,
-        });
-
-        const rescope = computeRescopeFromCompliance(taskSpec.manifest, compliance);
-        if (rescope.status === "updated") {
-          const manifestPath = resolveTaskManifestPath({
-            tasksRoot: tasksRootAbs,
-            stage: taskSpec.stage,
-            taskDirName: taskSpec.taskDirName,
-          });
-          await writeJsonFile(manifestPath, rescope.manifest);
-          taskSpec.manifest = rescope.manifest;
-
-          const resetReason = `Rescoped manifest: +${rescope.addedLocks.length} locks, +${rescope.addedFiles.length} files`;
-          resetTaskToPending(state, r.taskId, resetReason);
-          logOrchestratorEvent(orchLog, "task.rescope.updated", {
-            taskId: r.taskId,
-            added_locks: rescope.addedLocks,
-            added_files: rescope.addedFiles,
-            manifest_path: manifestPath,
-            report_path: complianceReportPath,
-          });
-          continue;
-        }
-
-        const failedReason = rescope.reason ?? rescopeReason;
-        state.tasks[r.taskId].last_error = failedReason;
-        logOrchestratorEvent(orchLog, "task.rescope.failed", {
-          taskId: r.taskId,
-          reason: failedReason,
-          violations: compliance.violations.length,
-          report_path: complianceReportPath,
-        });
-        continue;
-      }
+      runMetrics.scopeViolations.warnCount += complianceOutcome.scopeViolations.warnCount;
+      runMetrics.scopeViolations.blockCount += complianceOutcome.scopeViolations.blockCount;
 
     }
 
@@ -1886,16 +1683,12 @@ async function runProjectLegacy(
     let mergeConflictDetail: { taskId: string; branchName: string; message: string } | null = null;
     let integrationDoctorFailureDetail: { exitCode: number; output: string } | null = null;
 
-    const budgetBreaches = detectBudgetBreaches({
-      budgets: config.budgets,
-      taskUpdates: usageUpdates,
-      runBefore: runUsageBefore,
-      runAfter: runUsageAfter,
+    const budgetOutcome = budgetTracker.evaluateBreaches({
+      state,
+      snapshot: usageSnapshot,
     });
-    const budgetStop = budgetBreaches.length > 0 ? logBudgetBreaches(budgetBreaches) : undefined;
-    if (budgetStop) {
-      stopReason = budgetStop;
-      state.status = "failed";
+    if (budgetOutcome.stopReason) {
+      stopReason = budgetOutcome.stopReason;
     }
 
     const finishedCount = completed.size + failed.size;

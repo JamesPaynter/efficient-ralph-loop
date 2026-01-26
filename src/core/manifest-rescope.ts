@@ -8,6 +8,13 @@ export type RescopeComputation =
   | { status: "noop"; reason: string }
   | { status: "failed"; reason: string };
 
+export function describeManifestViolations(result: ManifestComplianceResult): string {
+  const count = result.violations.length;
+  const example = result.violations[0]?.path;
+  const detail = example ? ` (example: ${example})` : "";
+  return `${count} undeclared access request(s)${detail}`;
+}
+
 export function computeRescopeFromCompliance(
   manifest: TaskManifest,
   compliance: ManifestComplianceResult,
