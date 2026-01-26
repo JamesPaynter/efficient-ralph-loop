@@ -297,6 +297,18 @@ export function taskPolicyReportPath(repoPath: string, runId: string, taskId: st
   );
 }
 
+export function taskChangeManifestPath(repoPath: string, runId: string, taskId: string): string {
+  return path.join(
+    repoPath,
+    ".mycelium",
+    "reports",
+    "control-plane",
+    "change-manifest",
+    runId,
+    `${taskId}.json`,
+  );
+}
+
 export function runSummaryReportPath(repoPath: string, runId: string): string {
   return path.join(
     repoPath,

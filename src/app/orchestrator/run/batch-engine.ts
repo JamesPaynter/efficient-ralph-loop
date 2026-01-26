@@ -12,12 +12,16 @@ import {
   type ControlPlaneBlastRadiusReport,
 } from "../../../control-plane/integration/blast-radius.js";
 import {
+  buildTaskChangeManifest,
+  type TaskChangeManifest,
+} from "../../../control-plane/integration/change-manifest.js";
+import {
   buildDoctorCanarySummary,
   formatDoctorCanaryEnvVar,
   limitText,
 } from "../helpers/format.js";
 import { formatErrorMessage } from "../helpers/errors.js";
-import type { PolicyDecision } from "../../../control-plane/policy/types.js";
+import type { PolicyDecision, SurfacePatternSet } from "../../../control-plane/policy/types.js";
 import type { ControlPlaneRunConfig } from "../run-context.js";
 import type { BudgetTracker } from "../budgets/budget-tracker.js";
 import type { CompliancePipeline } from "../compliance/compliance-pipeline.js";
@@ -51,7 +55,7 @@ import {
   resolveTaskSpecPath,
   moveTaskDir,
 } from "../../../core/task-layout.js";
-import { taskBlastReportPath } from "../../../core/paths.js";
+import { taskBlastReportPath, taskChangeManifestPath } from "../../../core/paths.js";
 import { computeTaskFingerprint, upsertLedgerEntry } from "../../../core/task-ledger.js";
 import type { StateStore } from "../../../core/state-store.js";
 import { isoNow, writeJsonFile } from "../../../core/utils.js";
@@ -236,19 +240,38 @@ export function createBatchEngine(
     });
 
     const hadPendingResets = params.results.some((r) => !r.success && r.resetToPending);
+    const changeManifestBaseSha =
+      context.state.control_plane?.base_sha ?? context.blastContext?.baseSha ?? "";
     let doctorCanaryResult: DoctorCanaryResult | undefined;
     for (const r of params.results) {
       const taskSpec = params.batchTasks.find((t) => t.manifest.id === r.taskId);
 
+      let changeManifest: TaskChangeManifest | null = null;
+      if (r.success && taskSpec) {
+        changeManifest = await emitChangeManifestReport({
+          repoPath: context.repoPath,
+          runId: context.runId,
+          task: taskSpec,
+          workspacePath: r.workspace,
+          baseSha: changeManifestBaseSha,
+          model: context.blastContext?.model ?? null,
+          surfacePatterns: context.controlPlaneConfig.surfacePatterns,
+          vcs: context.vcs,
+          orchestratorLog: context.orchestratorLog,
+        });
+      }
+
       if (context.blastContext && taskSpec) {
         try {
+          const changedFiles =
+            changeManifest?.changed_files ??
+            (await context.vcs.listChangedFiles(r.workspace, context.blastContext.baseSha));
           const report = await emitBlastRadiusReport({
             repoPath: context.repoPath,
             runId: context.runId,
             task: taskSpec,
-            workspacePath: r.workspace,
+            changedFiles,
             blastContext: context.blastContext,
-            vcs: context.vcs,
             orchestratorLog: context.orchestratorLog,
           });
           if (report) {
@@ -773,6 +796,70 @@ export function createBatchEngine(
 }
 
 // =============================================================================
+// CHANGE MANIFEST
+// =============================================================================
+
+async function emitChangeManifestReport(input: {
+  repoPath: string;
+  runId: string;
+  task: TaskSpec;
+  workspacePath: string;
+  baseSha: string;
+  model: ControlPlaneModel | null;
+  surfacePatterns: SurfacePatternSet;
+  vcs: Vcs;
+  orchestratorLog: JsonlLogger;
+}): Promise<TaskChangeManifest | null> {
+  const baseSha = input.baseSha.trim();
+  if (!baseSha) {
+    logOrchestratorEvent(input.orchestratorLog, "task.change_manifest.error", {
+      taskId: input.task.manifest.id,
+      task_slug: input.task.slug,
+      message: "Missing base SHA for change manifest.",
+    });
+    return null;
+  }
+
+  try {
+    const [headSha, changedFiles] = await Promise.all([
+      input.vcs.headSha(input.workspacePath),
+      input.vcs.listChangedFiles(input.workspacePath, baseSha),
+    ]);
+    const manifest = buildTaskChangeManifest({
+      task: input.task.manifest,
+      baseSha,
+      headSha,
+      changedFiles,
+      model: input.model ?? undefined,
+      surfacePatterns: input.surfacePatterns,
+    });
+    const reportPath = taskChangeManifestPath(input.repoPath, input.runId, input.task.manifest.id);
+
+    await writeJsonFile(reportPath, manifest);
+
+    logOrchestratorEvent(input.orchestratorLog, "task.change_manifest", {
+      taskId: input.task.manifest.id,
+      task_slug: input.task.slug,
+      report_path: reportPath,
+      changed_files: manifest.changed_files.length,
+      touched_components: manifest.touched_components.length,
+      impacted_components: manifest.impacted_components.length,
+      surface_change: manifest.surface_change.is_surface_change,
+      surface_categories: manifest.surface_change.categories,
+    });
+
+    return manifest;
+  } catch (error) {
+    logOrchestratorEvent(input.orchestratorLog, "task.change_manifest.error", {
+      taskId: input.task.manifest.id,
+      task_slug: input.task.slug,
+      message: formatErrorMessage(error),
+    });
+    return null;
+  }
+}
+
+// =============================================================================
 // BLAST RADIUS
 // =============================================================================
 
@@ -785,19 +872,14 @@ async function emitBlastRadiusReport(input: {
   repoPath: string;
   runId: string;
   task: TaskSpec;
-  workspacePath: string;
+  changedFiles: string[];
   blastContext: BlastRadiusContext;
-  vcs: Vcs;
   orchestratorLog: JsonlLogger;
 }): Promise<ControlPlaneBlastRadiusReport | null> {
-  const changedFiles = await input.vcs.listChangedFiles(
-    input.workspacePath,
-    input.blastContext.baseSha,
-  );
   const report = buildBlastRadiusReport({
     task: input.task.manifest,
     baseSha: input.blastContext.baseSha,
-    changedFiles,
+    changedFiles: input.changedFiles,
     model: input.blastContext.model,
   });
   const reportPath = taskBlastReportPath(input.repoPath, input.runId, input.task.manifest.id);
