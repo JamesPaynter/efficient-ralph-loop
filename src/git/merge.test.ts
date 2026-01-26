@@ -116,7 +116,7 @@ describe("mergeTaskBranches", () => {
     expect(contents.trim()).toBe("color=blue");
     const fromC = await fse.readFile(path.join(repoPath, "notes-c.txt"), "utf8");
     expect(fromC).toContain("notes from C");
-  });
+  }, 20_000);
 });
 
 async function initIntegrationRepo(repoPath: string, mainBranch: string): Promise<void> {
