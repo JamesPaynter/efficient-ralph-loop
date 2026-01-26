@@ -45,6 +45,20 @@ function expandEnv(value: unknown, ctx: ExpandContext): unknown {
   return value;
 }
 
+function normalizeControlGraphAlias(doc: unknown): unknown {
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+    return doc;
+  }
+
+  const config = { ...(doc as Record<string, unknown>) };
+  if ("control_graph" in config) {
+    config.control_plane = config.control_graph;
+    delete config.control_graph;
+  }
+
+  return config;
+}
+
 function formatIssues(issues: ZodIssue[]): string {
   return issues
     .map((issue) => {
@@ -88,8 +102,9 @@ export function loadProjectConfig(configPath: string): ProjectConfig {
   }
 
   const expanded = expandEnv(doc, { file: absolutePath, trail: [] });
+  const normalized = normalizeControlGraphAlias(expanded);
 
-  const parsed = ProjectConfigSchema.safeParse(expanded);
+  const parsed = ProjectConfigSchema.safeParse(normalized);
   if (!parsed.success) {
     const details = formatIssues(parsed.error.issues);
     throw new ConfigError(`Invalid project config at ${absolutePath}:\n${details}`, parsed.error);

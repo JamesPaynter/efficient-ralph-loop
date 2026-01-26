@@ -102,7 +102,7 @@ describe("control-plane symbol references", () => {
       await runCli([
         "node",
         "mycelium",
-        "cp",
+        "cg",
         "symbols",
         "find",
         "UserId",
@@ -120,7 +120,7 @@ describe("control-plane symbol references", () => {
       await runCli([
         "node",
         "mycelium",
-        "cp",
+        "cg",
         "symbols",
         "refs",
         symbolId,
@@ -151,7 +151,7 @@ describe("control-plane symbol references", () => {
       await runCli([
         "node",
         "mycelium",
-        "cp",
+        "cg",
         "symbols",
         "find",
         "UserId",
@@ -169,7 +169,7 @@ describe("control-plane symbol references", () => {
       await runCli([
         "node",
         "mycelium",
-        "cp",
+        "cg",
         "symbols",
         "refs",
         symbolId,

@@ -1,6 +1,6 @@
 # Blast Radius Artifacts (Phase B)
 
-Blast radius is computed per task from the task diff and the control-plane dependency graph.
+Blast radius is computed per task from the task diff and the control graph dependency graph.
 The impacted set is conservative: when the graph is uncertain, it widens to all components.
 
 ## Artifact location
@@ -40,8 +40,8 @@ When `widening_reasons` is non-empty, `confidence` is `low`.
 ## CLI
 
 ```
-mycelium cp blast --run <runId> --task <taskId>
+mycelium cg blast --run <runId> --task <taskId>
 ```
 
-If the artifact is missing, the CLI recomputes deterministically against the control-plane base SHA
+If the artifact is missing, the CLI recomputes deterministically against the control graph base SHA
 for the current repo checkout.

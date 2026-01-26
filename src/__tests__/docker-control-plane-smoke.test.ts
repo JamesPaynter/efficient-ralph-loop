@@ -23,7 +23,7 @@ const REPO_MOUNT_PATH = "/workspace/repo";
 
 const dockerGate = resolveDockerGate();
 if (!dockerGate.enabled) {
-  console.warn(`Skipping Docker control plane smoke test: ${dockerGate.reason}`);
+  console.warn(`Skipping Docker control graph smoke test: ${dockerGate.reason}`);
 }
 
 const describeDocker = dockerGate.enabled ? describe : describe.skip;
@@ -32,7 +32,7 @@ const describeDocker = dockerGate.enabled ? describe : describe.skip;
 // TESTS
 // =============================================================================
 
-describeDocker("docker-mode control plane smoke", () => {
+describeDocker("docker-mode control graph smoke", () => {
   const tempRoots: string[] = [];
 
   afterEach(async () => {
@@ -42,7 +42,7 @@ describeDocker("docker-mode control plane smoke", () => {
     tempRoots.length = 0;
   });
 
-  it("runs control plane commands inside the worker image", async () => {
+  it("runs control graph commands inside the worker image", async () => {
     await ensureDockerAvailable();
     await ensureWorkerImage();
 
@@ -53,24 +53,24 @@ describeDocker("docker-mode control plane smoke", () => {
     await fse.copy(FIXTURE_REPO, repoDir);
     await initGitRepo(repoDir);
 
-    const helpResult = await runMyceliumInDocker(["cp", "--help"]);
-    expect(helpResult.stdout).toContain("control-plane");
+    const helpResult = await runMyceliumInDocker(["cg", "--help"]);
+    expect(helpResult.stdout).toContain("control-graph");
 
     const buildResult = await runMyceliumInDocker(
-      ["cp", "build", "--json", "--repo", REPO_MOUNT_PATH],
+      ["cg", "build", "--json", "--repo", REPO_MOUNT_PATH],
       { repoDir },
     );
-    const buildEnvelope = parseJsonEnvelope(buildResult.stdout, "cp build");
+    const buildEnvelope = parseJsonEnvelope(buildResult.stdout, "cg build");
     expect(buildEnvelope.ok).toBe(true);
 
     const listResult = await runMyceliumInDocker(
-      ["cp", "components", "list", "--json", "--repo", REPO_MOUNT_PATH],
+      ["cg", "components", "list", "--json", "--repo", REPO_MOUNT_PATH],
       { repoDir },
     );
-    const listEnvelope = parseJsonEnvelope<unknown[]>(listResult.stdout, "cp components list");
+    const listEnvelope = parseJsonEnvelope<unknown[]>(listResult.stdout, "cg components list");
     expect(listEnvelope.ok).toBe(true);
     if (!listEnvelope.ok) {
-      throw new Error(`cp components list failed: ${listEnvelope.error.message}`);
+      throw new Error(`cg components list failed: ${listEnvelope.error.message}`);
     }
     expect(Array.isArray(listEnvelope.result)).toBe(true);
     expect(listEnvelope.result.length).toBeGreaterThan(0);

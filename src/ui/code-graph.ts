@@ -134,8 +134,8 @@ export async function loadCodeGraphSnapshot(params: {
         ok: false,
         error: {
           code: "MODEL_NOT_FOUND",
-          message: `No control-plane model found for base_sha ${normalizedSha}.`,
-          hint: `Run: mycelium cp build --base-sha ${normalizedSha}`,
+          message: `No control graph model found for base_sha ${normalizedSha}.`,
+          hint: `Run: mycelium cg build --base-sha ${normalizedSha}`,
         },
       };
     }

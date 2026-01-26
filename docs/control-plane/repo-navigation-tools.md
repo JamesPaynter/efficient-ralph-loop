@@ -1,11 +1,11 @@
-# Control Plane Repo Navigation Tools (Phase A)
+# Control Graph Repo Navigation Tools (Phase A)
 
 Phase A defines the CLI surface and output contract for repository navigation.
 The commands are intentionally stubbed until the navigation model is implemented.
 
 ## Command group
 
-- `mycelium control-plane` (alias: `mycelium cp`)
+- `mycelium control-graph` (alias: `mycelium cg`)
 
 ## Shared flags
 
@@ -31,7 +31,7 @@ or
   "ok": false,
   "error": {
     "code": "MODEL_NOT_BUILT",
-    "message": "Control plane model not built. Run `mycelium cp build` to generate it.",
+    "message": "Control graph model not built. Run `mycelium cg build` to generate it.",
     "details": null
   }
 }
@@ -45,22 +45,30 @@ or
 
 ## Phase A command surface
 
-- `cp build`
-- `cp info`
-- `cp components list`
-- `cp components show <id>`
-- `cp owner <path>`
-- `cp deps <component>`
-- `cp rdeps <component>`
-- `cp blast ...`
-- `cp symbols find ...`
-- `cp symbols def ...`
-- `cp symbols refs ...`
+- `cg build`
+- `cg info`
+- `cg components list`
+- `cg components show <id>`
+- `cg owner <path>`
+- `cg deps <component>`
+- `cg rdeps <component>`
+- `cg blast ...`
+- `cg symbols find ...`
+- `cg symbols def ...`
+- `cg symbols refs ...`
+- `cg search <query>`
+
+## Fast search
+
+`cg search <query>` runs `git grep` and prints `file:line:content` matches.
+
+- `--max <n>` caps results (default: 200).
+- `--glob <pattern>` limits search to matching paths (repeatable).
 
 ## Phase B extensions
 
-- `cp blast --run <runId> --task <taskId>` reads per-task blast artifacts (or recomputes deterministically if missing).
-- `cp policy eval --repo <path> --base-sha <sha> --diff <range>` evaluates policy decisions for a change set.
+- `cg blast --run <runId> --task <taskId>` reads per-task blast artifacts (or recomputes deterministically if missing).
+- `cg policy eval --repo <path> --base-sha <sha> --diff <range>` evaluates policy decisions for a change set.
 
 ## Stub behavior
 
@@ -69,6 +77,6 @@ or
 
 ## Run pinning (Phase B)
 
-- Runs persist `control_plane.base_sha` (plus model metadata when available) at start.
+- Runs persist `control_plane.base_sha` (control graph metadata) at start.
 - The base SHA is written immediately after checkout so failed runs remain auditable.
 - Resume reuses the stored snapshot so base SHA and model hash stay fixed mid-run.

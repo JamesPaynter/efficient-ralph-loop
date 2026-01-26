@@ -14,7 +14,7 @@ and uses git diffs between the run base SHA and the current repo state.
 ## Default patterns
 
 ```yaml
-control_plane:
+control_graph:
   surface_patterns:
     contract:
       - "**/openapi.*"
@@ -46,7 +46,7 @@ Notes:
 
 ## Component association
 
-When a control-plane model is available, matched files are mapped to component IDs.
+When a control graph model is available, matched files are mapped to component IDs.
 This allows surface gating to apply only to tasks touching those components.
 
 ## Output shape

@@ -12,7 +12,7 @@ LLM-driven planner and Docker-isolated Codex workers that plan tasks, run them i
 
 ## Docs
 - Spec traceability matrix: `docs/spec-traceability.md` maps each spec principle to code, tests, and drills.
-- Control plane navigation tools: `docs/control-plane/repo-navigation-tools.md`.
+- Control graph navigation tools: `docs/control-plane/repo-navigation-tools.md`.
 
 ## Architecture boundaries
 - `src/core` is framework-agnostic logic; it must not import from `src/cli` or `src/ui`.
@@ -62,8 +62,8 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 ## Config quick reference
 - Planner/worker models: set `planner` and `worker` blocks (providers: `openai`, `anthropic`, `codex`, `mock`; `reasoning_effort` supported).
 - Resources: `resources[].paths` drive scheduler locks; manifests declare `locks.reads/writes` and `files.reads/writes`.
-- Control plane: `control_plane.enabled` derives component resources (`component_resource_prefix`), `resources_mode` selects how resources resolve (`prefer-derived`), `fallback_resource` handles unmapped files, `scope_mode` controls compliance enforcement (off/shadow/enforce), `lock_mode` selects declared/shadow/derived scheduling, `control_plane.checks.mode` (off/report/enforce) enables scoped doctor commands via `commands_by_component` with fallback to the global doctor, and `control_plane.surface_locks.enabled` adds `surface:<component>` locks for surface changes.
-- Manifest enforcement: `manifest_enforcement: off|warn|block`; violations emit `access.requested` and trigger auto-rescope when possible, unless `control_plane.scope_mode=shadow`.
+- Control graph: `control_graph.enabled` derives component resources (`component_resource_prefix`), `resources_mode` selects how resources resolve (`prefer-derived`), `fallback_resource` handles unmapped files, `scope_mode` controls compliance enforcement (off/shadow/enforce), `lock_mode` selects declared/shadow/derived scheduling, `control_graph.checks.mode` (off/report/enforce) enables scoped doctor commands via `commands_by_component` with fallback to the global doctor, and `control_graph.surface_locks.enabled` adds `surface:<component>` locks for surface changes. Legacy `control_plane` remains accepted.
+- Manifest enforcement: `manifest_enforcement: off|warn|block`; violations emit `access.requested` and trigger auto-rescope when possible, unless `control_graph.scope_mode=shadow`.
 - Task failure policy: `task_failure_policy: retry|fail_fast` (default `retry`); retry treats worker non-zero exits as retryable and resets tasks to pending, while `fail_fast` treats them as catastrophic and fails the task/run.
 - Worker retries: `max_retries` caps per-task worker attempts (`0` means retry forever); hitting the limit causes the worker to exit non-zero.
 - Validators: `test_validator`, `style_validator`, `architecture_validator`, and `doctor_validator` respect `enabled` + `mode` (`warn|block`); architecture validator uses `docs_glob` + `fail_if_docs_missing`, doctor validator cadence via `run_every_n_tasks` and also when integration doctor fails or the canary passes unexpectedly.
@@ -81,7 +81,7 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 - Worker retries: tasks loop through attempts until doctor passes or `max_retries` is hit (`0` = retry forever); worker crashes/non-zero exits reset tasks to pending when `task_failure_policy=retry`.
 - Strict TDD: when `tdd_mode: "strict"` and `verify.fast` is set, Stage A requires failing tests first; Stage B implements until doctor passes; non-test changes in Stage A fail the attempt.
 - Attempt summaries: each worker attempt writes `attempt-<N>.summary.json` plus `attempts.summary.md` under the task run logs dir (`<mycelium_home>/logs/<project>/run-<id>/tasks/<taskId>-<slug>`). Summaries include phase, retry reason + evidence paths, changed files, scope divergence vs `manifest.files.writes`, and TDD signals.
-- Scope drift: changes outside `manifest.files.writes` are recorded in attempt summaries and compliance reports; `control_plane.scope_mode=shadow` logs without blocking, while `manifest_enforcement=block` or `scope_mode=enforce` can stop and rescope.
+- Scope drift: changes outside `manifest.files.writes` are recorded in attempt summaries and compliance reports; `control_graph.scope_mode=shadow` logs without blocking, while `manifest_enforcement=block` or `scope_mode=enforce` can stop and rescope.
 - Manifest rescope: undeclared writes generate compliance reports and `task.rescope.*` events; successful rescope updates the manifest/locks and retries the task.
 - Log summaries: `logs summarize --task <id>` prints validator summaries; add `--llm` to use the configured LLM summaries when enabled.
 
