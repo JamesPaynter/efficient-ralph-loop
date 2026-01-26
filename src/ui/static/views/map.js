@@ -657,7 +657,7 @@ export function createMapView({ appState } = {}) {
       let payload;
       try {
         payload = JSON.parse(text);
-      } catch (error) {
+      } catch (_error) {
         return {
           ok: false,
           error: {
@@ -676,12 +676,12 @@ export function createMapView({ appState } = {}) {
       }
 
       return { ok: true, result: payload.result };
-    } catch (error) {
+    } catch (_error) {
       return {
         ok: false,
         error: {
           code: "NETWORK_ERROR",
-          message: toErrorMessage(error),
+          message: toErrorMessage(_error),
         },
       };
     }
@@ -1284,7 +1284,7 @@ export function createMapView({ appState } = {}) {
       try {
         await navigator.clipboard.writeText(commandText);
         return;
-      } catch (error) {
+      } catch (_error) {
         // Fall back to selecting the input for manual copy.
       }
     }

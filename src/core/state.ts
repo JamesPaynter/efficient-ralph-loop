@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import { ValidatorModeSchema } from "./config.js";
-import { isoNow } from "./utils.js";
 import { LocksSchema, type NormalizedLocks } from "./task-manifest.js";
+import { isoNow } from "./utils.js";
 
 export const TaskStatusSchema = z.enum([
   "pending",
@@ -421,7 +421,12 @@ export function applyTaskStatusOverride(
   task.human_review = undefined;
 }
 
-function applyResetToPending(state: RunState, task: TaskState, reason: string, now: string): void {
+function applyResetToPending(
+  state: RunState,
+  task: TaskState,
+  reason: string,
+  _now: string,
+): void {
   task.status = "pending";
   task.batch_id = undefined;
   task.branch = undefined;

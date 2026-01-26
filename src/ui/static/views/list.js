@@ -538,8 +538,8 @@ export function renderTaskInspector(container, appState, options = {}) {
 
       renderEvents();
       setDetailError("");
-    } catch (error) {
-      setDetailError(toErrorMessage(error));
+    } catch (_error) {
+      setDetailError(toErrorMessage(_error));
     } finally {
       viewState.isEventsLoading = false;
     }
@@ -565,9 +565,9 @@ export function renderTaskInspector(container, appState, options = {}) {
       const header = result.file ? `File: ${result.file}\n\n` : "";
       elements.doctorOutput.textContent = `${header}${result.content ?? ""}`;
       setDetailError("");
-    } catch (error) {
+    } catch (_error) {
       elements.doctorOutput.textContent = "No data.";
-      setDetailError(toErrorMessage(error));
+      setDetailError(toErrorMessage(_error));
     }
   }
 
@@ -584,9 +584,9 @@ export function renderTaskInspector(container, appState, options = {}) {
       const header = result.file ? `File: ${result.file}\n\n` : "";
       elements.complianceOutput.textContent = `${header}${formatJson(result.report)}`;
       setDetailError("");
-    } catch (error) {
+    } catch (_error) {
       elements.complianceOutput.textContent = "No data.";
-      setDetailError(toErrorMessage(error));
+      setDetailError(toErrorMessage(_error));
     }
   }
 
@@ -609,9 +609,9 @@ export function renderTaskInspector(container, appState, options = {}) {
       const header = result.file ? `File: ${result.file}\n\n` : "";
       elements.validatorOutput.textContent = `${header}${formatJson(result.report)}`;
       setDetailError("");
-    } catch (error) {
+    } catch (_error) {
       elements.validatorOutput.textContent = "No data.";
-      setDetailError(toErrorMessage(error));
+      setDetailError(toErrorMessage(_error));
     }
   }
 
@@ -1077,7 +1077,7 @@ export function renderTaskInspector(container, appState, options = {}) {
         payload: parsed.payload ?? null,
         raw: line,
       };
-    } catch (error) {
+    } catch (_error) {
       return {
         ts: null,
         type: "raw",
@@ -1096,7 +1096,7 @@ export function renderTaskInspector(container, appState, options = {}) {
 
     try {
       return hashString(JSON.stringify(event));
-    } catch (error) {
+    } catch (_error) {
       return "event-unknown";
     }
   }
@@ -1355,7 +1355,7 @@ function formatArgsPreview(value) {
 
   try {
     return JSON.stringify(value);
-  } catch (error) {
+  } catch (_error) {
     return String(value);
   }
 }
@@ -1482,7 +1482,7 @@ function formatJson(value) {
   if (value === null || value === undefined) return "";
   try {
     return JSON.stringify(value, null, 2);
-  } catch (error) {
+  } catch (_error) {
     return String(value);
   }
 }

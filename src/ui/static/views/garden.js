@@ -2654,7 +2654,7 @@ export function createGardenView({ appState, actions, fetchApi }) {
         type: parsed.type ?? "unknown",
         ts: parsed.ts ?? null,
       };
-    } catch (error) {
+    } catch (_error) {
       return {
         type: "raw",
         ts: null,

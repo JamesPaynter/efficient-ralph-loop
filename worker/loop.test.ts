@@ -264,7 +264,7 @@ describe("runWorker strict TDD", () => {
     await execa("git", ["commit", "-m", "update fast command"], { cwd: workspace });
 
     const testFile = path.join(workspace, "tests", "beta.test.ts");
-    __setMockCodexHandler(async ({ turn, workingDirectory }) => {
+    __setMockCodexHandler(async ({ turn, workingDirectory: _workingDirectory }) => {
       if (turn === 1 || turn === 2) {
         await fs.mkdir(path.dirname(testFile), { recursive: true });
         await fs.writeFile(testFile, `test ${turn}\n`, "utf8");

@@ -5,6 +5,8 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { runProject } from "../core/executor.js";
+import { orchestratorLogPath, runStatePath } from "../core/paths.js";
 import type { DockerManager as DockerManagerType } from "../docker/manager.js";
 
 const mocks = vi.hoisted(() => {
@@ -98,9 +100,6 @@ vi.mock("../docker/manager.js", () => {
 
   return { DockerManager };
 });
-
-import { runProject } from "../core/executor.js";
-import { orchestratorLogPath, runStatePath } from "../core/paths.js";
 
 const ENV_VARS = ["MYCELIUM_HOME", "MOCK_LLM"] as const;
 const originalEnv: Record<(typeof ENV_VARS)[number], string | undefined> = Object.fromEntries(

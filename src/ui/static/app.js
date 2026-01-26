@@ -293,8 +293,8 @@ async function fetchSummary() {
     views.list.onSummary(summary);
     views.garden.onSummary?.(summary);
     setGlobalError("");
-  } catch (error) {
-    setGlobalError(toErrorMessage(error));
+  } catch (_error) {
+    setGlobalError(toErrorMessage(_error));
   } finally {
     appState.isSummaryLoading = false;
   }
@@ -384,7 +384,7 @@ async function fetchApi(url) {
   let payload;
   try {
     payload = JSON.parse(text);
-  } catch (error) {
+  } catch (_error) {
     throw new Error(`Invalid JSON response from ${url}`);
   }
 

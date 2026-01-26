@@ -8,16 +8,6 @@ import { listRunHistoryEntries, type RunHistoryEntry } from "../core/run-history
 import { loadConfigForCli } from "./config.js";
 
 // =============================================================================
-// TYPES
-// =============================================================================
-
-type RunsListOptions = {
-  project?: string;
-  limit?: number;
-  json?: boolean;
-};
-
-// =============================================================================
 // COMMAND REGISTRATION
 // =============================================================================
 

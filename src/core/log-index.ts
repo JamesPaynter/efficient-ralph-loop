@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import Database from "better-sqlite3";
+import SqliteDatabase from "better-sqlite3";
 
 type InsertableEvent = {
   run_id: string;
@@ -38,13 +38,13 @@ export class LogIndex {
   private closed = false;
 
   private constructor(
-    private readonly db: Database.Database,
+    private readonly db: SqliteDatabase.Database,
     private readonly runId: string,
   ) {}
 
   static open(runId: string, runLogsDir: string, dbPath = logIndexPath(runLogsDir)): LogIndex {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const db = new Database(dbPath);
+    const db = new SqliteDatabase(dbPath);
     const index = new LogIndex(db, runId);
     index.ensureSchema();
     return index;

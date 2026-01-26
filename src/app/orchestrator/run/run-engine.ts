@@ -8,33 +8,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { BudgetTracker } from "../budgets/budget-tracker.js";
-import { CompliancePipeline } from "../compliance/compliance-pipeline.js";
-import { formatErrorMessage, normalizeAbortReason } from "../helpers/errors.js";
-import { averageRounded, secondsFromMs } from "../helpers/time.js";
-import type { ControlPlaneRunConfig, RunContext } from "../run-context.js";
-import { ValidationPipeline } from "../validation/validation-pipeline.js";
-import type { Vcs } from "../vcs/vcs.js";
-import { DockerWorkerRunner } from "../workers/docker-worker-runner.js";
-import { LocalWorkerRunner } from "../workers/local-worker-runner.js";
-import type { WorkerRunner } from "../workers/worker-runner.js";
-
-export { shouldResetTaskToPending } from "./failure-policy.js";
-
-import { buildControlPlaneModel } from "../../../control-plane/model/build.js";
-import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
-import { ControlPlaneStore } from "../../../control-plane/storage.js";
-import {
-  createComponentOwnerResolver,
-  createComponentOwnershipResolver,
-  deriveComponentResources,
-} from "../../../control-plane/integration/resources.js";
 import {
   createDerivedScopeSnapshot,
   deriveTaskWriteScopeReport,
   type DerivedScopeReport,
 } from "../../../control-plane/integration/derived-scope.js";
+import {
+  createComponentOwnerResolver,
+  createComponentOwnershipResolver,
+  deriveComponentResources,
+} from "../../../control-plane/integration/resources.js";
+import { buildControlPlaneModel } from "../../../control-plane/model/build.js";
+import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
 import type { PolicyDecision } from "../../../control-plane/policy/types.js";
+import { ControlPlaneStore } from "../../../control-plane/storage.js";
 import type {
   ControlPlaneLockMode,
   ControlPlaneResourcesMode,
@@ -56,17 +43,6 @@ import {
   runSummaryReportPath,
   taskLockDerivationReportPath,
 } from "../../../core/paths.js";
-import { loadTaskSpecs } from "../../../core/task-loader.js";
-import { normalizeLocks, type TaskSpec } from "../../../core/task-manifest.js";
-import { buildTaskFileIndex, type TaskFileLocation } from "../../../core/task-file-index.js";
-import { resolveTasksArchiveDir } from "../../../core/task-layout.js";
-import {
-  computeTaskFingerprint,
-  importLedgerFromRunState,
-  loadTaskLedger,
-  type TaskLedger,
-  type TaskLedgerEntry,
-} from "../../../core/task-ledger.js";
 import {
   buildGreedyBatch,
   topologicalReady,
@@ -81,10 +57,32 @@ import {
   type RunState,
   type TaskStatus,
 } from "../../../core/state.js";
+import { buildTaskFileIndex, type TaskFileLocation } from "../../../core/task-file-index.js";
+import { resolveTasksArchiveDir } from "../../../core/task-layout.js";
+import {
+  computeTaskFingerprint,
+  importLedgerFromRunState,
+  loadTaskLedger,
+  type TaskLedger,
+  type TaskLedgerEntry,
+} from "../../../core/task-ledger.js";
+import { loadTaskSpecs } from "../../../core/task-loader.js";
+import { normalizeLocks, type TaskSpec } from "../../../core/task-manifest.js";
 import { ensureDir, isoNow, readJsonFile, writeJsonFile } from "../../../core/utils.js";
 import type { ContainerSpec } from "../../../docker/docker.js";
+import { BudgetTracker } from "../budgets/budget-tracker.js";
+import { CompliancePipeline } from "../compliance/compliance-pipeline.js";
+import { formatErrorMessage, normalizeAbortReason } from "../helpers/errors.js";
+import { averageRounded, secondsFromMs } from "../helpers/time.js";
+import type { ControlPlaneRunConfig, RunContext } from "../run-context.js";
+import { ValidationPipeline } from "../validation/validation-pipeline.js";
+import type { Vcs } from "../vcs/vcs.js";
+import { DockerWorkerRunner } from "../workers/docker-worker-runner.js";
+import { LocalWorkerRunner } from "../workers/local-worker-runner.js";
+import type { WorkerRunner } from "../workers/worker-runner.js";
 
 import { createBatchEngine } from "./batch-engine.js";
+export { shouldResetTaskToPending } from "./failure-policy.js";
 import { createTaskEngine } from "./task-engine.js";
 
 const RUN_HEARTBEAT_INTERVAL_MS = 30_000;
