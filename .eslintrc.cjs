@@ -34,7 +34,6 @@ module.exports = {
     },
     {
       files: [
-        "src/core/executor.ts",
         "src/cli/logs.ts",
         "src/cli/control-plane.ts",
         "src/ui/router.ts",
