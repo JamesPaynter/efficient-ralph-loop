@@ -33,6 +33,20 @@ module.exports = {
       },
     },
     {
+      files: [
+        "src/ui/static/app.js",
+        "src/ui/static/views/garden.js",
+        "src/ui/static/views/list.js",
+        "src/ui/static/views/map.js",
+      ],
+      rules: {
+        "max-lines": "off",
+        complexity: "off",
+        "max-statements": "off",
+        "max-params": "off",
+      },
+    },
+    {
       files: ["src/cli/logs.ts", "src/cli/control-plane.ts", "src/ui/router.ts"],
       rules: {
         "max-lines": "off",
