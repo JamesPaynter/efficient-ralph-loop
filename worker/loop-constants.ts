@@ -1,0 +1,3 @@
+export const DOCTOR_PROMPT_LIMIT = 12_000;
+export const OUTPUT_PREVIEW_LIMIT = 4_000;
+export const PROMPT_PREVIEW_LIMIT = 4_000;
