@@ -24,7 +24,7 @@ import type { PathsContext } from "../../../core/paths.js";
 import { taskComplianceReportPath } from "../../../core/paths.js";
 import { markTaskRescopeRequired, resetTaskToPending, type RunState } from "../../../core/state.js";
 import { resolveTaskManifestPath } from "../../../core/task-layout.js";
-import type { TaskManifest, TaskSpec } from "../../../core/task-manifest.js";
+import type { TaskSpec } from "../../../core/task-manifest.js";
 import { writeJsonFile } from "../../../core/utils.js";
 
 import {

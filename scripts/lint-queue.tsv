@@ -1,6 +1,6 @@
 # status	id	files	rules	last_commit	note
-todo	L001	src/__tests__/resume-drill.test.ts	@typescript-eslint/no-unused-vars		
-todo	L002	src/app/orchestrator/compliance/compliance-pipeline.ts	@typescript-eslint/no-unused-vars		
+done	L001	src/__tests__/resume-drill.test.ts	@typescript-eslint/no-unused-vars
+done	L002	src/app/orchestrator/compliance/compliance-pipeline.ts	@typescript-eslint/no-unused-vars		
 todo	L003	src/app/orchestrator/run/batch-engine.ts	complexity,max-depth,max-statements		
 todo	L004	src/app/orchestrator/run/run-engine.ts	complexity,max-statements		
 todo	L005	src/app/orchestrator/run/task-engine-attempt.ts	max-statements		
