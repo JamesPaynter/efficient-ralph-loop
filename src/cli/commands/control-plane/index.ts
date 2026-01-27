@@ -15,7 +15,10 @@ import {
   emitControlPlaneResult,
   emitModelNotBuiltError,
 } from "../../../control-plane/cli/output.js";
-import { buildControlPlaneModel, getControlPlaneModelInfo } from "../../../control-plane/model/build.js";
+import {
+  buildControlPlaneModel,
+  getControlPlaneModelInfo,
+} from "../../../control-plane/model/build.js";
 import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
 import { ControlPlaneBuildLockError, ControlPlaneStore } from "../../../control-plane/storage.js";
 

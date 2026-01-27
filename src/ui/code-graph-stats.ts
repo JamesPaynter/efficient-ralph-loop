@@ -5,10 +5,7 @@ import path from "node:path";
 
 import type { RunState } from "../core/state.js";
 
-import type {
-  CodeGraphComponent,
-  ComponentStats,
-} from "./code-graph-types.js";
+import type { CodeGraphComponent, ComponentStats } from "./code-graph-types.js";
 import { isWithinRoot, toRepoRelativePath } from "./code-graph-utils.js";
 
 // =============================================================================

@@ -38,7 +38,12 @@ export function registerSymbolCommands(
     .option("--path <glob>", "Filter by file path glob")
     .option("--limit <n>", "Limit number of matches (default: 50)", (value) => parseInt(value, 10))
     .action(async (query, opts, command) => {
-      await handleSymbolsFind(query as string[] | string, opts as SymbolFindOptions, command, sharedContext);
+      await handleSymbolsFind(
+        query as string[] | string,
+        opts as SymbolFindOptions,
+        command,
+        sharedContext,
+      );
     });
 
   symbols

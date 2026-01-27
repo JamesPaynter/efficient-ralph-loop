@@ -456,7 +456,6 @@ async function runEngineImpl(context: RunContext<RunOptions, RunResult>): Promis
   }
 }
 
-
 // =============================================================================
 // RUN SETUP HELPERS
 // =============================================================================
@@ -1322,7 +1321,6 @@ async function loadTasksForRun(input: TaskLoadInput): Promise<TaskLoadResult> {
   return { tasks, taskCatalog };
 }
 
-
 // =============================================================================
 // RUN LOOP
 // =============================================================================
@@ -1366,7 +1364,9 @@ async function executeRunLoop(input: RunLoopContext): Promise<RunResult | null> 
     const activeBatch = input.state.batches.find((b) => b.status === "running");
     if (activeBatch) return activeBatch;
 
-    const runningTaskEntry = Object.entries(input.state.tasks).find(([, t]) => t.status === "running");
+    const runningTaskEntry = Object.entries(input.state.tasks).find(
+      ([, t]) => t.status === "running",
+    );
     if (!runningTaskEntry) return null;
 
     const batchId = input.state.tasks[runningTaskEntry[0]].batch_id;
@@ -1535,7 +1535,11 @@ async function handleNoReadyTasks(input: {
   runId: string;
   completed: Set<string>;
 }): Promise<RunLoopOutcome> {
-  const dependencyIssues = collectDependencyIssues(input.pendingTasks, input.state, input.completed);
+  const dependencyIssues = collectDependencyIssues(
+    input.pendingTasks,
+    input.state,
+    input.completed,
+  );
   if (
     dependencyIssues.blocked.length > 0 &&
     dependencyIssues.missing.length === 0 &&
@@ -1571,8 +1575,7 @@ async function handleNoReadyTasks(input: {
     }));
     logOrchestratorEvent(input.orchLog, "run.blocked", {
       reason: "missing_dependencies",
-      message:
-        "No dependency-satisfied tasks remain; some dependencies are missing from this run.",
+      message: "No dependency-satisfied tasks remain; some dependencies are missing from this run.",
       pending_task_count: input.pendingTasks.length,
       blocked_task_count: missingPayload.length,
       blocked_tasks: missingPayload,
@@ -1735,7 +1738,6 @@ async function finalizeRun(input: RunFinalizationInput): Promise<RunResult> {
 
   return { runId: input.runId, state: input.state, plan: input.plannedBatches };
 }
-
 
 // =============================================================================
 // RUN STOP TYPES

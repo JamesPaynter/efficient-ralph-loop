@@ -221,8 +221,14 @@ function normalizeValidatorReportPathArgs(
   args: ValidatorReportPathArgs,
 ): ValidatorReportPathOptions {
   if (typeof args[0] === "string") {
-    const [projectName, runId, validatorName, taskId, taskSlug, paths] =
-      args as [string, string, string, string, string, PathsContext?];
+    const [projectName, runId, validatorName, taskId, taskSlug, paths] = args as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      PathsContext?,
+    ];
     return { projectName, runId, validatorName, taskId, taskSlug, paths };
   }
 

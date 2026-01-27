@@ -19,10 +19,7 @@ import {
   CONTAINER_WORKDIR,
   findTaskContainer,
 } from "./docker-worker-helpers.js";
-import {
-  cleanupTaskContainer,
-  stopRunContainers,
-} from "./docker-worker-runner-cleanup.js";
+import { cleanupTaskContainer, stopRunContainers } from "./docker-worker-runner-cleanup.js";
 import type {
   WorkerCleanupInput,
   WorkerPrepareInput,

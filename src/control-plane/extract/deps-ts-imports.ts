@@ -104,13 +104,7 @@ async function collectEdgesForFile(
   const specifiers = extractImportSpecifiers(source);
   const edges: ControlPlaneDependencyEdge[] = [];
   for (const specifier of specifiers) {
-    appendEdgesForSpecifier(
-      specifier,
-      componentId,
-      workspacePackagesByName,
-      seen,
-      edges,
-    );
+    appendEdgesForSpecifier(specifier, componentId, workspacePackagesByName, seen, edges);
   }
 
   return edges;

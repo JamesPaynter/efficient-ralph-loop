@@ -170,7 +170,9 @@ function createRescopeUpdates(): RescopeUpdates {
   return { addedLocks: new Set<string>(), addedFiles: new Set<string>() };
 }
 
-function isMissingResourceMapping(violation: ManifestComplianceResult["violations"][number]): boolean {
+function isMissingResourceMapping(
+  violation: ManifestComplianceResult["violations"][number],
+): boolean {
   return violation.reasons.includes("resource_unmapped") && violation.resources.length === 0;
 }
 

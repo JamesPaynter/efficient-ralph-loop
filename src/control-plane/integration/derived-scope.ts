@@ -152,9 +152,7 @@ async function deriveTaskWriteScope(input: {
   return deriveScopeFromExpandedFiles(context);
 }
 
-function deriveScopeFromComponentLocks(
-  context: DerivedScopeContext,
-): DerivedWriteScope | null {
+function deriveScopeFromComponentLocks(context: DerivedScopeContext): DerivedWriteScope | null {
   if (context.componentLocks.length === 0) {
     return null;
   }

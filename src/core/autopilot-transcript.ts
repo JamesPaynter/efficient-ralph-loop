@@ -64,9 +64,7 @@ function appendPlanningArtifacts(
   lines.push(`- Discovery → API findings: ${relative(data.artifactPaths.apiFindingsPath)}`);
   lines.push(`- Architecture → architecture: ${relative(data.artifactPaths.architecturePath)}`);
   lines.push(`- Architecture → decisions: ${relative(data.artifactPaths.decisionsPath)}`);
-  lines.push(
-    `- Architecture → infrastructure: ${relative(data.artifactPaths.infrastructurePath)}`,
-  );
+  lines.push(`- Architecture → infrastructure: ${relative(data.artifactPaths.infrastructurePath)}`);
   lines.push(`- Implementation → plan: ${relative(data.artifactPaths.implementationPlanPath)}`);
   lines.push(`- Implementation → risks: ${relative(data.artifactPaths.riskAssessmentPath)}`);
   lines.push("");

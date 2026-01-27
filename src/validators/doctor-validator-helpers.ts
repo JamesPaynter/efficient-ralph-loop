@@ -1,10 +1,7 @@
 export { DoctorValidationSchema, DoctorValidatorJsonSchema } from "./doctor-validator-schema.js";
 export type { DoctorValidationReport } from "./doctor-validator-schema.js";
 
-export {
-  buildValidationContext,
-  normalizeDoctorCanary,
-} from "./doctor-validator-context.js";
+export { buildValidationContext, normalizeDoctorCanary } from "./doctor-validator-context.js";
 export type {
   DoctorCanaryResult,
   DoctorRunSample,

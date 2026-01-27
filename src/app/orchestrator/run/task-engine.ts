@@ -88,8 +88,7 @@ export function createTaskEngine(context: TaskEngineContext): TaskEngine {
   return {
     buildReadyForValidationSummaries: (batchTasks) =>
       buildReadyForValidationSummaries(context, batchTasks),
-    buildValidatedTaskSummaries: (batchTasks) =>
-      buildValidatedTaskSummaries(context, batchTasks),
+    buildValidatedTaskSummaries: (batchTasks) => buildValidatedTaskSummaries(context, batchTasks),
     ensureTaskActiveStage: (task) => ensureTaskActiveStage(context, task),
     resumeRunningTask: (task) => resumeRunningTask(context, failurePolicy, task),
     runTaskAttempt: (task) => runTaskAttempt(context, failurePolicy, task),

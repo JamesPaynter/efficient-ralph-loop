@@ -74,7 +74,6 @@ import type {
   TaskSuccessResult,
 } from "./task-engine.js";
 
-
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -582,7 +581,9 @@ export function createBatchEngine(
     }
   };
 
-  const runIntegrationDoctor = async (batchId: number): Promise<{
+  const runIntegrationDoctor = async (
+    batchId: number,
+  ): Promise<{
     doctorOk: boolean;
     exitCode: number;
     output: string;
@@ -799,9 +800,7 @@ export function createBatchEngine(
         })),
       });
 
-      const successfulTasksById = new Map(
-        input.successfulTasks.map((task) => [task.taskId, task]),
-      );
+      const successfulTasksById = new Map(input.successfulTasks.map((task) => [task.taskId, task]));
       outcome.mergedTasks = mergeResult.merged
         .map((task) => successfulTasksById.get(task.taskId))
         .filter((task): task is TaskSuccessResult => task !== undefined);
@@ -850,7 +849,9 @@ export function createBatchEngine(
         }
       }
     } finally {
-      await context.vcs.checkout(context.repoPath, context.config.main_branch).catch(() => undefined);
+      await context.vcs
+        .checkout(context.repoPath, context.config.main_branch)
+        .catch(() => undefined);
     }
 
     return outcome;
@@ -1277,7 +1278,6 @@ export function createBatchEngine(
   return { finalizeBatch };
 }
 
-
 // =============================================================================
 // MERGE HELPERS
 // =============================================================================
@@ -1286,7 +1286,6 @@ function buildTempMergeBranchName(runId: string, batchId: number): string {
   const safeRunId = runId.replace(/[^A-Za-z0-9_.-]/g, "-") || "run";
   return `mycelium/merge/${safeRunId}/${batchId}`;
 }
-
 
 // =============================================================================
 // CHANGE MANIFEST

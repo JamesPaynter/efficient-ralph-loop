@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAppContext, type AppContext } from "../app/context.js";
 import { ProjectConfigSchema } from "../core/config.js";
 import type { RunHistoryEntry } from "../core/run-history.js";
-import { createRunState } from "../core/state.js";
 import type { RunStatusSummary } from "../core/state-store.js";
+import { createRunState } from "../core/state.js";
 import { startUiServer, type StartUiServerOptions, type UiServerHandle } from "../ui/server.js";
 
 const tempDirs: string[] = [];
@@ -235,9 +235,7 @@ describe("UI server", () => {
     expect(summaryPayload.result.status).toBe("running");
     expect(summaryPayload.result.tasks[0].id).toBe(taskId);
 
-    const runsPayload = await fetchOkPayload<RunsApiResult>(
-      buildRunsUrl(baseUrl, projectName),
-    );
+    const runsPayload = await fetchOkPayload<RunsApiResult>(buildRunsUrl(baseUrl, projectName));
     expect(runsPayload.result.runs).toEqual(
       expect.arrayContaining([expect.objectContaining({ runId })]),
     );

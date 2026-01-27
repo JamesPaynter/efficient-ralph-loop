@@ -1,4 +1,8 @@
-import type { DoctorRunSample, DoctorCanaryResult, ValidationContext } from "./doctor-validator-context.js";
+import type {
+  DoctorRunSample,
+  DoctorCanaryResult,
+  ValidationContext,
+} from "./doctor-validator-context.js";
 
 // =============================================================================
 // FORMATTING

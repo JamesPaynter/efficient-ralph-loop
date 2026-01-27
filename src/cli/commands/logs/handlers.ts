@@ -214,13 +214,13 @@ function printDoctorLogSummary(
     return;
   }
 
-  console.log(`- Last doctor log (${ctx.logQueryService.relativeToRun(runLogsDir, doctorLog.path)}):`);
+  console.log(
+    `- Last doctor log (${ctx.logQueryService.relativeToRun(runLogsDir, doctorLog.path)}):`,
+  );
   console.log(indentMultiline(doctorLog.content));
 }
 
-function printValidatorSummaries(
-  validatorSummaries: SummaryContext["validatorSummaries"],
-): void {
+function printValidatorSummaries(validatorSummaries: SummaryContext["validatorSummaries"]): void {
   console.log("- Validator results:");
   if (validatorSummaries.length === 0) {
     console.log("  • none found");

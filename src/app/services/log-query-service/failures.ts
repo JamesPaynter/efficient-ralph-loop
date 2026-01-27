@@ -64,9 +64,7 @@ const FAILURE_HANDLERS: Record<string, FailureHandler> = {
       return null;
     }
     const message =
-      stringFrom(payload.message) ??
-      stringFrom(payload.reason) ??
-      "Doctor canary unexpected pass";
+      stringFrom(payload.message) ?? stringFrom(payload.reason) ?? "Doctor canary unexpected pass";
     return {
       key: "doctor.canary.unexpected_pass",
       label: "Doctor canary unexpected passes",

@@ -37,7 +37,10 @@ import {
   type ComplianceScopeViolations,
 } from "./compliance-helpers.js";
 
-export { buildComplianceRescopePlan, resolveCompliancePolicyForTier } from "./compliance-helpers.js";
+export {
+  buildComplianceRescopePlan,
+  resolveCompliancePolicyForTier,
+} from "./compliance-helpers.js";
 export type { ComplianceRescopePlan, ComplianceScopeViolations } from "./compliance-helpers.js";
 
 // =============================================================================
@@ -94,7 +97,6 @@ export type CompliancePipelineOutcome = {
   scopeViolations: ComplianceScopeViolations;
   rescope: ComplianceRescopeOutcome;
 };
-
 
 // =============================================================================
 // COMPLIANCE PIPELINE

@@ -94,9 +94,7 @@ export async function buildValidationContext(params: {
   };
 }
 
-export function normalizeDoctorCanary(
-  canary?: DoctorCanaryResult,
-): DoctorCanaryResult | undefined {
+export function normalizeDoctorCanary(canary?: DoctorCanaryResult): DoctorCanaryResult | undefined {
   if (!canary) return undefined;
   if (canary.status === "skipped") return canary;
 

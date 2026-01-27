@@ -47,11 +47,7 @@ export async function buildDerivedScopeContext(input: {
   const expandedFiles = await resolveExpandedFiles({
     writeGlobs,
     snapshotPath: input.snapshotPath,
-    shouldExpand: shouldExpandWriteGlobs(
-      writeGlobs,
-      componentLocks,
-      input.surfaceLocksEnabled,
-    ),
+    shouldExpand: shouldExpandWriteGlobs(writeGlobs, componentLocks, input.surfaceLocksEnabled),
   });
   const surfaceLockComponents = resolveSurfaceLockComponents({
     expandedFiles,

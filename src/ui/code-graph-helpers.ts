@@ -1,8 +1,5 @@
 export { readControlPlaneModel, resolveBaseSha } from "./code-graph-model.js";
-export {
-  computeRunQuality,
-  getComponentStats,
-} from "./code-graph-stats.js";
+export { computeRunQuality, getComponentStats } from "./code-graph-stats.js";
 export {
   ensureRepoPath,
   isValidSha,

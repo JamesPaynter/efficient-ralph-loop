@@ -308,12 +308,7 @@ function requireTask(state: RunState, taskId: string): TaskState {
   return task;
 }
 
-function applyResetToPending(
-  state: RunState,
-  task: TaskState,
-  reason: string,
-  _now: string,
-): void {
+function applyResetToPending(state: RunState, task: TaskState, reason: string, _now: string): void {
   task.status = "pending";
   task.batch_id = undefined;
   task.branch = undefined;
