@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { LogIndex, logIndexPath, type LogIndexQuery } from "../../../core/log-index.js";
-import type { JsonlFilter, LogSearchResult } from "../../../core/log-query.js";
+import type { JsonlFilter } from "../../../core/log-query.js";
 
 import type { LogIndexQueryResult, LogIndexSearchResult } from "./types.js";
 
