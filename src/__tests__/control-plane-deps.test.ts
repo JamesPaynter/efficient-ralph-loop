@@ -7,8 +7,8 @@ import fse from "fs-extra";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { extractComponents } from "../control-plane/extract/components.js";
-import { extractTypeScriptImportDependencyEdges } from "../control-plane/extract/deps-ts-imports.js";
 import { extractWorkspacePackageDependencyEdges } from "../control-plane/extract/deps-packages.js";
+import { extractTypeScriptImportDependencyEdges } from "../control-plane/extract/deps-ts-imports.js";
 import {
   buildControlPlaneDependencies,
   resolveComponentDependencies,

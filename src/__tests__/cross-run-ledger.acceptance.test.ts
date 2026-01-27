@@ -11,8 +11,8 @@ import { planProject } from "../cli/plan.js";
 import { loadProjectConfig } from "../core/config-loader.js";
 import { runProject } from "../core/executor.js";
 import { orchestratorLogPath } from "../core/paths.js";
-import { loadTaskSpecs } from "../core/task-loader.js";
 import { resolveTaskManifestPath, resolveTaskSpecPath } from "../core/task-layout.js";
+import { loadTaskSpecs } from "../core/task-loader.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/toy-repo");

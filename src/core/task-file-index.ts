@@ -3,12 +3,12 @@ import path from "node:path";
 import fg from "fast-glob";
 import fse from "fs-extra";
 
-import type { TaskSpec } from "./task-manifest.js";
 import {
   resolveTaskManifestPath,
   resolveTaskSpecPath,
   resolveTasksArchiveDir,
 } from "./task-layout.js";
+import type { TaskSpec } from "./task-manifest.js";
 
 export type TaskFileLocation = {
   manifestPath: string;

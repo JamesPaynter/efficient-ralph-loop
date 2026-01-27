@@ -4,8 +4,8 @@ import path from "node:path";
 import fse from "fs-extra";
 import { describe, expect, it } from "vitest";
 
-import { writeTasksToDirectory } from "./task-writer.js";
 import type { TaskWithSpec } from "./task-manifest.js";
+import { writeTasksToDirectory } from "./task-writer.js";
 
 function tmpDir(prefix: string): Promise<string> {
   return fse.mkdtemp(path.join(os.tmpdir(), prefix));

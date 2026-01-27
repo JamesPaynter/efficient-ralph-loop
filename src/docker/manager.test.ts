@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { JsonlLogger } from "../core/logger.js";
+
 import { DockerManager } from "./manager.js";
 
 const tempFiles: string[] = [];

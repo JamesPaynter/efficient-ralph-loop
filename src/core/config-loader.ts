@@ -5,8 +5,8 @@ import yaml from "js-yaml";
 import type { ZodIssue } from "zod";
 
 import { ProjectConfigSchema, type ProjectConfig } from "./config.js";
-import { normalizeTestPaths, DEFAULT_TEST_PATHS } from "./test-paths.js";
 import { ConfigError } from "./errors.js";
+import { normalizeTestPaths, DEFAULT_TEST_PATHS } from "./test-paths.js";
 
 type ExpandContext = {
   file: string;

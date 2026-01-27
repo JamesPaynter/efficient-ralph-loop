@@ -3,6 +3,7 @@
 // Assumes component IDs are normalized (no resource prefix).
 
 import type { ControlPlaneDependencyEdge, ControlPlaneModel } from "../model/schema.js";
+
 import type { SurfaceChangeCategory } from "./types.js";
 
 export type ChecksetMode = "off" | "report" | "enforce";

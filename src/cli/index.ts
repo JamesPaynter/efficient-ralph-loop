@@ -2,10 +2,11 @@ import { Command } from "commander";
 
 import type { AppContext } from "../app/context.js";
 import type { ProjectConfig } from "../core/config.js";
-import { loadConfigForCli } from "./config.js";
+
 
 import { autopilotCommand } from "./autopilot.js";
 import { cleanCommand } from "./clean.js";
+import { loadConfigForCli } from "./config.js";
 import { registerControlPlaneCommand } from "./control-plane.js";
 import { initCommand } from "./init.js";
 import { registerLogsCommand } from "./logs.js";

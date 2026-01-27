@@ -9,10 +9,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { isGitRepo, pathExists, readJsonFile } from "../core/utils.js";
-import type { RunState } from "../core/state.js";
-import type { ControlPlaneModel, ControlPlaneComponent } from "../control-plane/model/schema.js";
 import type { ControlPlaneModelMetadata } from "../control-plane/metadata.js";
+import type { ControlPlaneModel, ControlPlaneComponent } from "../control-plane/model/schema.js";
+import type { RunState } from "../core/state.js";
+import { isGitRepo, pathExists, readJsonFile } from "../core/utils.js";
 
 const execFileAsync = promisify(execFile);
 

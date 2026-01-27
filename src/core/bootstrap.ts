@@ -1,6 +1,7 @@
 import type Docker from "dockerode";
 
 import type { DockerManager } from "../docker/manager.js";
+
 import { TaskError } from "./errors.js";
 import type { JsonlLogger } from "./logger.js";
 

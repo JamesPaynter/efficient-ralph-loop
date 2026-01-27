@@ -4,9 +4,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildFailureGroups, buildTimeline } from "./logs.js";
 import type { RunLogEvent } from "../core/run-logs.js";
 import type { RunState } from "../core/state.js";
+
+import { buildFailureGroups, buildTimeline } from "./logs.js";
 
 function makeEvent(base: Partial<RunLogEvent> & { ts: string; type: string }): RunLogEvent {
   return {

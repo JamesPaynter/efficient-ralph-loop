@@ -9,6 +9,8 @@ import path from "node:path";
 
 import fse from "fs-extra";
 
+import { loadWorkerState, type WorkerCheckpoint } from "../../../../worker/state.js";
+import type { DerivedScopeReport } from "../../../control-plane/integration/derived-scope.js";
 import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
 import type { ChecksetDecision } from "../../../control-plane/policy/checkset.js";
 import {
@@ -16,9 +18,8 @@ import {
   type ChecksetReport,
 } from "../../../control-plane/policy/eval.js";
 import type { PolicyDecision, SurfacePatternSet } from "../../../control-plane/policy/types.js";
-import type { DerivedScopeReport } from "../../../control-plane/integration/derived-scope.js";
-import { ensureCodexAuthForHome } from "../../../core/codexAuth.js";
 import { resolveCodexReasoningEffort } from "../../../core/codex-reasoning.js";
+import { ensureCodexAuthForHome } from "../../../core/codexAuth.js";
 import type { ProjectConfig } from "../../../core/config.js";
 import { JsonlLogger, logOrchestratorEvent, logTaskReset } from "../../../core/logger.js";
 import {
@@ -36,13 +37,12 @@ import { moveTaskDir, resolveTaskDir } from "../../../core/task-layout.js";
 import type { TaskSpec } from "../../../core/task-manifest.js";
 import { ensureDir, writeJsonFile } from "../../../core/utils.js";
 import { prepareTaskWorkspace } from "../../../core/workspaces.js";
-import { loadWorkerState, type WorkerCheckpoint } from "../../../../worker/state.js";
-
 import { formatErrorMessage } from "../helpers/errors.js";
-import { shouldResetTaskToPending } from "./failure-policy.js";
 import type { ControlPlaneRunConfig } from "../run-context.js";
 import type { Vcs } from "../vcs/vcs.js";
 import type { WorkerRunner, WorkerRunnerResult } from "../workers/worker-runner.js";
+
+import { shouldResetTaskToPending } from "./failure-policy.js";
 
 // =============================================================================
 // TYPES

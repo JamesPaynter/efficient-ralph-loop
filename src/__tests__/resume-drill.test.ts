@@ -11,13 +11,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { planProject } from "../cli/plan.js";
 import { loadProjectConfig } from "../core/config-loader.js";
 import { orchestratorLogPath } from "../core/paths.js";
+import { StateStore } from "../core/state-store.js";
+import type { RunState } from "../core/state.js";
 import {
   detectTasksLayout,
   resolveTasksActiveDir,
   resolveTasksBacklogDir,
 } from "../core/task-layout.js";
-import { StateStore } from "../core/state-store.js";
-import type { RunState } from "../core/state.js";
 import { dockerClient } from "../docker/docker.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

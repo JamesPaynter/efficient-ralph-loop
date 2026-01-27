@@ -4,9 +4,9 @@
 
 import path from "node:path";
 
+import type { ResourceConfig } from "../../core/config.js";
 import { resolveOwnershipForPath } from "../extract/ownership.js";
 import type { ControlPlaneModel } from "../model/schema.js";
-import type { ResourceConfig } from "../../core/config.js";
 
 export type ComponentOwnerResolver = (filePath: string) => string | null;
 

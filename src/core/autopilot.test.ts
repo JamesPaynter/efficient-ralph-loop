@@ -5,17 +5,18 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  type LlmClient,
+  type LlmCompletionResult,
+  type LlmCompletionOptions,
+} from "../llm/client.js";
+
+import {
   formatAutopilotTranscript,
   runAutopilotSession,
   writePlanningArtifacts,
   type AutopilotIo,
   type AutopilotArtifacts,
 } from "./autopilot.js";
-import {
-  type LlmClient,
-  type LlmCompletionResult,
-  type LlmCompletionOptions,
-} from "../llm/client.js";
 
 class StubLlmClient implements LlmClient {
   constructor(private readonly responses: Array<LlmCompletionResult<any>>) {}

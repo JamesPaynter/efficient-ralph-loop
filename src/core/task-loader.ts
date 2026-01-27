@@ -4,13 +4,13 @@ import fg from "fast-glob";
 import fse from "fs-extra";
 
 import { TaskError } from "./errors.js";
+import { detectTasksLayout, resolveTaskStageFromManifestPath } from "./task-layout.js";
 import {
   TaskManifestSchema,
   formatManifestIssues,
   validateResourceLocks,
   type TaskSpec,
 } from "./task-manifest.js";
-import { detectTasksLayout, resolveTaskStageFromManifestPath } from "./task-layout.js";
 import { slugify } from "./utils.js";
 
 export type TaskValidationError = {

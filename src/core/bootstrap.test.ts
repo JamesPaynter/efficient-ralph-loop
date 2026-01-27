@@ -5,9 +5,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ExecResult } from "../docker/manager.js";
+
+import { runBootstrap } from "./bootstrap.js";
 import { TaskError } from "./errors.js";
 import { JsonlLogger } from "./logger.js";
-import { runBootstrap } from "./bootstrap.js";
 
 const tempFiles: string[] = [];
 

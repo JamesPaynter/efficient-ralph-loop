@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadProjectConfig } from "./config-loader.js";
 import { runProject } from "./executor.js";
 import { createPathsContext, orchestratorLogPath } from "./paths.js";
-import type { TaskWithSpec } from "./task-manifest.js";
 import { resolveTasksBacklogDir } from "./task-layout.js";
+import type { TaskWithSpec } from "./task-manifest.js";
 import { writeTasksToDirectory } from "./task-writer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

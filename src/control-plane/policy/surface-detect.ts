@@ -7,6 +7,7 @@ import { minimatch } from "minimatch";
 
 import { resolveOwnershipForPath } from "../extract/ownership.js";
 import type { ControlPlaneModel } from "../model/schema.js";
+
 import type {
   SurfaceChangeCategory,
   SurfaceChangeDetection,

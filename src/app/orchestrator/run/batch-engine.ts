@@ -17,30 +17,19 @@ import {
 } from "../../../control-plane/integration/change-manifest.js";
 import type { DerivedScopeReport } from "../../../control-plane/integration/derived-scope.js";
 import { evaluateControlGraphScope } from "../../../control-plane/integration/scope-enforcement.js";
-import {
-  buildDoctorCanarySummary,
-  formatDoctorCanaryEnvVar,
-  limitText,
-} from "../helpers/format.js";
-import { formatErrorMessage } from "../helpers/errors.js";
+import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
 import type { PolicyDecision, SurfacePatternSet } from "../../../control-plane/policy/types.js";
-import type { ControlPlaneRunConfig } from "../run-context.js";
-import type { BudgetTracker } from "../budgets/budget-tracker.js";
-import type { CompliancePipeline } from "../compliance/compliance-pipeline.js";
-import type { ValidationPipeline } from "../validation/validation-pipeline.js";
-import type { DoctorValidationOutcome, ValidationOutcome } from "../validation/types.js";
-import type { Vcs } from "../vcs/vcs.js";
-import type { WorkerRunner } from "../workers/worker-runner.js";
-import type { RunMetrics } from "./run-engine.js";
-import type { TaskEngine, TaskRunResult, TaskSuccessResult } from "./task-engine.js";
-import type { JsonObject, JsonlLogger } from "../../../core/logger.js";
-import { logOrchestratorEvent, logTaskReset } from "../../../core/logger.js";
 import type {
   ControlPlaneScopeMode,
   ManifestEnforcementPolicy,
   ProjectConfig,
 } from "../../../core/config.js";
+import type { JsonObject, JsonlLogger } from "../../../core/logger.js";
+import { logOrchestratorEvent, logTaskReset } from "../../../core/logger.js";
 import { computeRescopeFromComponentScope } from "../../../core/manifest-rescope.js";
+import type { PathsContext } from "../../../core/paths.js";
+import { taskBlastReportPath, taskChangeManifestPath } from "../../../core/paths.js";
+import type { StateStore } from "../../../core/state-store.js";
 import {
   completeBatch,
   markTaskComplete,
@@ -52,20 +41,33 @@ import {
   type RunState,
   type ValidatorResult,
 } from "../../../core/state.js";
-import type { TaskSpec } from "../../../core/task-manifest.js";
-import type { PathsContext } from "../../../core/paths.js";
 import {
   resolveTaskManifestPath,
   resolveTaskSpecPath,
   moveTaskDir,
 } from "../../../core/task-layout.js";
-import { taskBlastReportPath, taskChangeManifestPath } from "../../../core/paths.js";
 import { computeTaskFingerprint, upsertLedgerEntry } from "../../../core/task-ledger.js";
-import type { StateStore } from "../../../core/state-store.js";
+import type { TaskSpec } from "../../../core/task-manifest.js";
 import { isoNow, writeJsonFile } from "../../../core/utils.js";
 import { removeTaskWorkspace } from "../../../core/workspaces.js";
 import type { DoctorCanaryResult } from "../../../validators/doctor-validator.js";
-import type { ControlPlaneModel } from "../../../control-plane/model/schema.js";
+import type { BudgetTracker } from "../budgets/budget-tracker.js";
+import type { CompliancePipeline } from "../compliance/compliance-pipeline.js";
+import { formatErrorMessage } from "../helpers/errors.js";
+import {
+  buildDoctorCanarySummary,
+  formatDoctorCanaryEnvVar,
+  limitText,
+} from "../helpers/format.js";
+import type { ControlPlaneRunConfig } from "../run-context.js";
+import type { DoctorValidationOutcome, ValidationOutcome } from "../validation/types.js";
+import type { ValidationPipeline } from "../validation/validation-pipeline.js";
+import type { Vcs } from "../vcs/vcs.js";
+import type { WorkerRunner } from "../workers/worker-runner.js";
+
+import type { RunMetrics } from "./run-engine.js";
+import type { TaskEngine, TaskRunResult, TaskSuccessResult } from "./task-engine.js";
+
 
 // =============================================================================
 // TYPES

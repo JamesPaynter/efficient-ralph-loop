@@ -8,7 +8,7 @@ import path from "node:path";
 import { extractComponents } from "../extract/components.js";
 import { buildOwnershipIndex } from "../extract/ownership.js";
 import { extractTypeScriptSymbolDefinitions } from "../extract/symbols-ts/index.js";
-import { buildControlPlaneDependencies } from "./deps.js";
+import { resolveBaseSha } from "../git.js";
 import {
   createControlPlaneMetadata,
   isMetadataCompatible,
@@ -16,7 +16,8 @@ import {
   type ControlPlaneModelMetadata,
 } from "../metadata.js";
 import { ControlPlaneStore } from "../storage.js";
-import { resolveBaseSha } from "../git.js";
+
+import { buildControlPlaneDependencies } from "./deps.js";
 import { createEmptyModel, MODEL_SCHEMA_VERSION, type ControlPlaneModel } from "./schema.js";
 
 export type ControlPlaneBuildOptions = {

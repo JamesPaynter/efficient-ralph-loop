@@ -2,13 +2,14 @@
 // Purpose: merge dependency edges, build query indices, and resolve deps/rdeps output.
 // Assumes component ids are stable across extractors.
 
+import { extractWorkspacePackageDependencyEdges } from "../extract/deps-packages.js";
+import { extractTypeScriptImportDependencyEdges } from "../extract/deps-ts-imports.js";
+
 import type {
   ControlPlaneComponent,
   ControlPlaneDependencies,
   ControlPlaneDependencyEdge,
 } from "./schema.js";
-import { extractWorkspacePackageDependencyEdges } from "../extract/deps-packages.js";
-import { extractTypeScriptImportDependencyEdges } from "../extract/deps-ts-imports.js";
 
 export type ControlPlaneDependencyQueryResult = {
   component_id: string;

@@ -6,15 +6,15 @@ import fse from "fs-extra";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createPathsContext, taskLedgerPath } from "./paths.js";
+import { createRunState } from "./state.js";
 import {
   computeTaskFingerprint,
   importLedgerFromRunState,
   loadTaskLedger,
   saveTaskLedger,
 } from "./task-ledger.js";
-import { createRunState } from "./state.js";
-import type { TaskSpec } from "./task-manifest.js";
 import type { TaskLedger } from "./task-ledger.js";
+import type { TaskSpec } from "./task-manifest.js";
 
 const temporaryDirectories: string[] = [];
 

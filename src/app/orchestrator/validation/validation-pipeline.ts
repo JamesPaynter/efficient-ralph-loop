@@ -47,15 +47,15 @@ import {
   VALIDATOR_NAME as TEST_VALIDATOR_NAME,
 } from "../../../validators/test-validator.js";
 import { formatErrorMessage } from "../helpers/errors.js";
+import type { ValidatorRunner } from "../ports.js";
+import type { RunValidatorConfig } from "../run-context.js";
+
 import {
   summarizeArchitectureReport,
   summarizeDoctorReport,
   summarizeStyleReport,
   summarizeTestReport,
 } from "./summaries.js";
-import type { ValidatorRunner } from "../ports.js";
-import type { RunValidatorConfig } from "../run-context.js";
-
 import type {
   DoctorValidationOutcome,
   ValidationBlock,

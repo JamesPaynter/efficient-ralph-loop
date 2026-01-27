@@ -1,7 +1,7 @@
 import { z, type RefinementCtx, type ZodIssue } from "zod";
 
-import { normalizeTestPaths } from "./test-paths.js";
 import type { TaskStage } from "./task-layout.js";
+import { normalizeTestPaths } from "./test-paths.js";
 import { slugify } from "./utils.js";
 
 export const LocksSchema = z

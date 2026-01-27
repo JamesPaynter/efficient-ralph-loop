@@ -10,6 +10,7 @@ import { JsonlLogger } from "../core/logger.js";
 import { validatorLogPath, validatorReportPath } from "../core/paths.js";
 import type { TaskSpec } from "../core/task-manifest.js";
 import type { LlmClient, LlmCompletionResult } from "../llm/client.js";
+
 import { runArchitectureValidator } from "./architecture-validator.js";
 
 class FakeLlm implements LlmClient {

@@ -5,8 +5,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRunState, type ControlPlaneSnapshot } from "../core/state.js";
 import type { ControlPlaneModel } from "../control-plane/model/schema.js";
+import { createRunState, type ControlPlaneSnapshot } from "../core/state.js";
 import { createUiRouter } from "../ui/router.js";
 
 const ENV_VARS = ["MYCELIUM_HOME"] as const;

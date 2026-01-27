@@ -10,12 +10,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { planProject } from "../cli/plan.js";
 import { loadProjectConfig } from "../core/config-loader.js";
 import { runProject } from "../core/executor.js";
-import { buildTaskDirName } from "../core/task-manifest.js";
 import {
   resolveTasksActiveDir,
   resolveTasksArchiveDir,
   resolveTasksBacklogDir,
 } from "../core/task-layout.js";
+import { buildTaskDirName } from "../core/task-manifest.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/toy-repo");

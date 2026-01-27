@@ -2,13 +2,14 @@ import path from "node:path";
 
 import { minimatch } from "minimatch";
 
+import { listChangedFiles } from "../git/changes.js";
+
 import type {
   ControlPlaneResourcesMode,
   ManifestEnforcementPolicy,
   ResourceConfig,
 } from "./config.js";
 import type { TaskManifest } from "./task-manifest.js";
-import { listChangedFiles } from "../git/changes.js";
 import { writeJsonFile } from "./utils.js";
 
 // =============================================================================

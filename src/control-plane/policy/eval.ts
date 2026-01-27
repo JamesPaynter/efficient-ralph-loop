@@ -5,8 +5,7 @@ import type { TaskManifest } from "../../core/task-manifest.js";
 import { normalizeFiles, normalizeLocks } from "../../core/task-manifest.js";
 import type { DerivedScopeReport } from "../integration/derived-scope.js";
 import type { ControlPlaneModel } from "../model/schema.js";
-import { detectSurfaceChanges } from "./surface-detect.js";
-import type { PolicyDecision, SurfaceChangeDetection, SurfacePatternSet } from "./types.js";
+
 import {
   computeChecksetDecision,
   computeChecksetImpactFromGraph,
@@ -16,7 +15,9 @@ import {
   type ChecksetMode,
   type ChecksetWideningReason,
 } from "./checkset.js";
+import { detectSurfaceChanges } from "./surface-detect.js";
 import { classifyAutonomyTier, shouldForceGlobalChecksForTier } from "./tier.js";
+import type { PolicyDecision, SurfaceChangeDetection, SurfacePatternSet } from "./types.js";
 
 // =============================================================================
 // PUBLIC TYPES

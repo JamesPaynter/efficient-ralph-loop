@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { TaskError } from "../core/errors.js";
-import { loadTaskSpecs } from "../core/task-loader.js";
 import { resolveTaskDir } from "../core/task-layout.js";
+import { loadTaskSpecs } from "../core/task-loader.js";
 
 const tempRoots: string[] = [];
 

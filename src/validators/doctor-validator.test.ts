@@ -9,6 +9,7 @@ import type { DoctorValidatorConfig } from "../core/config.js";
 import { JsonlLogger } from "../core/logger.js";
 import { runLogsDir, validatorLogPath, validatorsLogsDir } from "../core/paths.js";
 import type { LlmClient, LlmCompletionResult } from "../llm/client.js";
+
 import { runDoctorValidator } from "./doctor-validator.js";
 
 class FakeLlm implements LlmClient {

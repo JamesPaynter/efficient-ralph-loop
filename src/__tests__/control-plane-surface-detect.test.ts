@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { extractComponents } from "../control-plane/extract/components.js";
 import { buildOwnershipIndex } from "../control-plane/extract/ownership.js";
+import { createEmptyModel, type ControlPlaneModel } from "../control-plane/model/schema.js";
 import {
   associateSurfaceChangesWithComponents,
   detectSurfaceChanges,
 } from "../control-plane/policy/surface-detect.js";
-import { createEmptyModel, type ControlPlaneModel } from "../control-plane/model/schema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/control-plane-mini-repo");

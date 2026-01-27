@@ -6,8 +6,8 @@ import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildControlPlaneModel, getControlPlaneModelInfo } from "../control-plane/model/build.js";
-import { ControlPlaneStore } from "../control-plane/storage.js";
 import { MODEL_SCHEMA_VERSION } from "../control-plane/model/schema.js";
+import { ControlPlaneStore } from "../control-plane/storage.js";
 
 const tempDirs: string[] = [];
 

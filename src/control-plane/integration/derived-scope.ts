@@ -8,6 +8,7 @@ import path from "node:path";
 
 import fg from "fast-glob";
 
+import type { TaskManifest } from "../../core/task-manifest.js";
 import { git } from "../../git/git.js";
 import { resolveOwnershipForPath } from "../extract/ownership.js";
 import type { ControlPlaneModel } from "../model/schema.js";
@@ -17,7 +18,6 @@ import {
   resolveSurfacePatterns,
 } from "../policy/surface-detect.js";
 import type { SurfacePatternSet } from "../policy/types.js";
-import type { TaskManifest } from "../../core/task-manifest.js";
 
 export type DerivedScopeConfidence = "high" | "medium" | "low";
 

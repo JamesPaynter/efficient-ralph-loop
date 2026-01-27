@@ -6,7 +6,6 @@ import path from "node:path";
 
 import ts from "typescript";
 
-import { resolveOwnershipForPath } from "../ownership.js";
 import type {
   ControlPlaneComponent,
   ControlPlaneOwnership,
@@ -14,6 +13,8 @@ import type {
   ControlPlaneSymbolRange,
   ControlPlaneSymbolReference,
 } from "../../model/schema.js";
+import { resolveOwnershipForPath } from "../ownership.js";
+
 import type { TypeScriptProject } from "./tsconfig.js";
 import { loadTypeScriptProject } from "./tsconfig.js";
 

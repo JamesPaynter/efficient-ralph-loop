@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { WorkerCheckpoint } from "../../worker/state.js";
+
 import { checkpointListsEqual, mergeCheckpointCommits } from "./executor.js";
 import type { CheckpointCommit } from "./state.js";
-import type { WorkerCheckpoint } from "../../worker/state.js";
 
 describe("mergeCheckpointCommits", () => {
   it("merges and sorts checkpoints by attempt", () => {

@@ -7,8 +7,8 @@ import { execa } from "execa";
 import fse from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { main } from "../index.js";
 import { runLogsDir, runStatePath, runWorkspaceDir } from "../core/paths.js";
+import { main } from "../index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/toy-repo");

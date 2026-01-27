@@ -13,6 +13,7 @@ import {
   createComponentOwnershipResolver,
 } from "../control-plane/integration/resources.js";
 import { createEmptyModel, type ControlPlaneModel } from "../control-plane/model/schema.js";
+
 import type { ResourceConfig } from "./config.js";
 import { resolveResourcesForFile, runManifestCompliance } from "./manifest-compliance.js";
 import type { TaskManifest } from "./task-manifest.js";
