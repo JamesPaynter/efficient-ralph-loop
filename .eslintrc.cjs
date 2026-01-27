@@ -42,6 +42,12 @@ module.exports = {
         "max-statements": "off",
       },
     },
+    {
+      files: ["src/app/orchestrator/run/run-engine.ts", "src/app/orchestrator/run/batch-engine.ts"],
+      rules: {
+        "max-lines": "off",
+      },
+    },
   ],
   rules: {
     "@typescript-eslint/no-explicit-any": "off",

@@ -1,162 +1,20 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import type { Command } from "commander";
-import { execa } from "execa";
-import fse from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildCli } from "../cli/index.js";
 import { buildControlPlaneModel } from "../control-plane/model/build.js";
-import type {
-  ControlPlaneComponent,
-  ControlPlaneDependencyEdge,
-  ControlPlaneSymbolDefinition,
-  ControlPlaneSymbolReference,
-} from "../control-plane/model/schema.js";
+import type { ControlPlaneComponent, ControlPlaneDependencyEdge } from "../control-plane/model/schema.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE_REPO = path.resolve(__dirname, "../../test/fixtures/control-plane-mini-repo");
-const tempDirs: string[] = [];
-
-const EXPECTED_COMPONENTS: ControlPlaneComponent[] = [
-  {
-    id: "acme-web-app",
-    name: "@acme/web-app",
-    roots: ["apps/web"],
-    kind: "app",
-    language_hints: ["ts"],
-  },
-  {
-    id: "acme-infra-terraform",
-    name: "@acme/infra-terraform",
-    roots: ["infra/terraform"],
-    kind: "infra",
-    language_hints: ["js"],
-  },
-  {
-    id: "acme-utils",
-    name: "@acme/utils",
-    roots: ["packages/utils"],
-    kind: "lib",
-    language_hints: ["ts"],
-  },
-];
-
-// =============================================================================
-// HELPERS
-// =============================================================================
-
-type JsonEnvelope<T> =
-  | { ok: true; result: T }
-  | { ok: false; error: { code: string; message: string; details: unknown } };
-
-type SymbolFindResult = {
-  query: string;
-  total: number;
-  limit: number;
-  truncated: boolean;
-  matches: ControlPlaneSymbolDefinition[];
-};
-
-type SymbolDefinitionResult = {
-  symbol_id: string;
-  definition: ControlPlaneSymbolDefinition | null;
-  snippet: { start_line: number; lines: string[] } | null;
-};
-
-type SymbolReferencesResult = {
-  symbol_id: string;
-  definition: ControlPlaneSymbolDefinition | null;
-  total: number;
-  limit: number;
-  truncated: boolean;
-  group_by: string | null;
-  references: ControlPlaneSymbolReference[];
-  groups: Array<{ key: string; references: ControlPlaneSymbolReference[] }> | null;
-};
-
-async function runCli(argv: string[]): Promise<void> {
-  const program = buildCli();
-  installExitOverride(program);
-  await program.parseAsync(argv);
-}
-
-function installExitOverride(command: Command): void {
-  command.exitOverride();
-
-  for (const child of command.commands) {
-    installExitOverride(child);
-  }
-}
-
-async function createTempRepoFromFixture(): Promise<string> {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cp-acceptance-"));
-  tempDirs.push(tempRoot);
-
-  const repoDir = path.join(tempRoot, "repo");
-  await fse.copy(FIXTURE_REPO, repoDir);
-  await initGitRepo(repoDir);
-
-  return repoDir;
-}
-
-async function initGitRepo(repoDir: string): Promise<void> {
-  await execa("git", ["init"], { cwd: repoDir });
-  await execa("git", ["config", "user.email", "cp-acceptance@example.com"], {
-    cwd: repoDir,
-  });
-  await execa("git", ["config", "user.name", "Control Plane Acceptance"], {
-    cwd: repoDir,
-  });
-  await execa("git", ["add", "-A"], { cwd: repoDir });
-  await execa("git", ["commit", "-m", "init"], { cwd: repoDir });
-}
-
-function createControlPlaneRunner(
-  repoDir: string,
-): <T>(args: string[]) => Promise<JsonEnvelope<T>> {
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-  return async function runJson<T>(args: string[]): Promise<JsonEnvelope<T>> {
-    logSpy.mockClear();
-    await runCli(["node", "mycelium", "cg", ...args, "--json", "--repo", repoDir, "--no-build"]);
-
-    return parseLastJsonLine<JsonEnvelope<T>>(logSpy);
-  };
-}
-
-function parseLastJsonLine<T>(logSpy: ReturnType<typeof vi.spyOn>): T {
-  const line = logSpy.mock.calls.map((call: unknown[]) => call.join(" ")).pop() ?? "";
-  return JSON.parse(line) as T;
-}
-
-function expectOk<T>(payload: JsonEnvelope<T>): T {
-  expect(payload.ok).toBe(true);
-  if (payload.ok) {
-    return payload.result;
-  }
-  throw new Error(payload.error.message);
-}
-
-function expectedComponentById(componentId: string): ControlPlaneComponent {
-  const match = EXPECTED_COMPONENTS.find((component) => component.id === componentId);
-  if (!match) {
-    throw new Error(`Missing expected component: ${componentId}`);
-  }
-  return match;
-}
-
-function edge(
-  from_component: string,
-  to_component: string,
-  kind: ControlPlaneDependencyEdge["kind"],
-  confidence: ControlPlaneDependencyEdge["confidence"],
-): ControlPlaneDependencyEdge {
-  return { from_component, to_component, kind, confidence };
-}
+import {
+  cleanupTempDirs,
+  createControlPlaneRunner,
+  createTempRepoFromFixture,
+  edge,
+  EXPECTED_COMPONENTS,
+  expectOk,
+  expectedComponentById,
+  type SymbolDefinitionResult,
+  type SymbolFindResult,
+  type SymbolReferencesResult,
+} from "./control-plane-acceptance.helpers.js";
 
 // =============================================================================
 // TESTS
@@ -167,10 +25,7 @@ describe("control-plane acceptance", () => {
     vi.restoreAllMocks();
     process.exitCode = 0;
 
-    for (const dir of tempDirs) {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-    tempDirs.length = 0;
+    await cleanupTempDirs();
   });
 
   it("returns stable component and ownership results", async () => {

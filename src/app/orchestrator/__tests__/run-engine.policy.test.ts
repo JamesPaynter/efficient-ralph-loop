@@ -1,63 +1,153 @@
-/**
- * RunEngine helper tests.
- * Purpose: validate scope resolution and task failure policy mapping.
- */
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSurfacePatterns } from "../../../control-plane/policy/surface-detect.js";
-import type { TaskFailurePolicy } from "../../../core/config.js";
-import { resolveScopeComplianceMode, shouldResetTaskToPending } from "../run/run-engine.js";
-import type { ControlPlaneRunConfig } from "../run-context.js";
-import type { WorkerRunnerResult } from "../workers/worker-runner.js";
+import { runSummaryReportPath } from "../../../core/paths.js";
+import {
+  buildPortOverrides,
+  buildProjectConfig,
+  buildTaskManifest,
+  buildTestContext,
+  getChangesMocks,
+  loadRunEngine,
+  registerRunEngineTestHooks,
+  setupRepo,
+  useFakeRunner,
+  writeTaskSpec,
+} from "./run-engine.test-kit.js";
+import { FakeVcs, FakeWorkerRunner } from "./fakes.js";
 
-// =============================================================================
-// HELPERS
-// =============================================================================
+registerRunEngineTestHooks();
 
-function buildControlPlaneConfig(
-  overrides: Partial<ControlPlaneRunConfig> = {},
-): ControlPlaneRunConfig {
-  return {
-    enabled: false,
-    componentResourcePrefix: "component:",
-    fallbackResource: "repo-root",
-    resourcesMode: "prefer-derived",
-    scopeMode: "shadow",
-    lockMode: "declared",
-    checks: {
-      mode: "off",
-      commandsByComponent: {},
-      maxComponentsForScoped: 3,
-    },
-    surfacePatterns: resolveSurfacePatterns(),
-    surfaceLocksEnabled: false,
-    ...overrides,
-  };
-}
+describe("runEngine", () => {
+  it("returns a stopped result when the stop signal is already set", async () => {
+    const { repoPath, tasksRoot, tmpRoot, paths } = await setupRepo("run-engine-stop-");
 
-// =============================================================================
-// TESTS
-// =============================================================================
+    await writeTaskSpec(tasksRoot, buildTaskManifest("001", "stop-task"));
 
-describe("run-engine helpers", () => {
-  it("honors scope_mode even when control plane is disabled", () => {
-    const config = buildControlPlaneConfig({ enabled: false, scopeMode: "shadow" });
+    const config = buildProjectConfig(repoPath);
+    const projectName = "stop-run";
+    const runId = "run-stop";
 
-    expect(resolveScopeComplianceMode(config)).toBe("shadow");
+    const fakeRunner = new FakeWorkerRunner();
+    fakeRunner.setStopResult({ stopped: 1, errors: 0 });
+    useFakeRunner(fakeRunner);
+
+    const controller = new AbortController();
+    controller.abort("stop-now");
+
+    const fakeVcs = new FakeVcs();
+    const context = await buildTestContext({
+      projectName,
+      config,
+      options: {
+        runId,
+        useDocker: false,
+        buildImage: false,
+        stopSignal: controller.signal,
+        stopContainersOnExit: true,
+        reuseCompleted: false,
+      },
+      ports: buildPortOverrides({ logsRoot: path.join(tmpRoot, "log-sink"), vcs: fakeVcs, paths }),
+      paths,
+    });
+
+    const { runEngine } = await loadRunEngine();
+    const result = await runEngine(context);
+
+    expect(result.stopped?.containers).toBe("stopped");
+    expect(result.stopped?.stopContainersRequested).toBe(true);
+    expect(fakeRunner.stopCalls).toHaveLength(1);
   });
 
-  it("maps retry policy to reset-to-pending on worker failures", () => {
-    const result: WorkerRunnerResult = { success: false, errorMessage: "boom" };
-    const policy: TaskFailurePolicy = "retry";
+  it("fails the run when budget enforcement blocks", async () => {
+    const { repoPath, tasksRoot, tmpRoot, paths } = await setupRepo("run-engine-budget-");
 
-    expect(shouldResetTaskToPending({ policy, result })).toBe(true);
+    await writeTaskSpec(tasksRoot, buildTaskManifest("001", "budget-task"));
+
+    const config = buildProjectConfig(repoPath, {
+      budgets: { max_tokens_per_task: 1, mode: "block" },
+    });
+    const projectName = "budget-run";
+    const runId = "run-budget";
+
+    const fakeRunner = new FakeWorkerRunner();
+    fakeRunner.queueRunAttempt("001", { success: true }, { tokens: 10, attempt: 1 });
+    useFakeRunner(fakeRunner);
+
+    const fakeVcs = new FakeVcs();
+    const context = await buildTestContext({
+      projectName,
+      config,
+      options: {
+        runId,
+        maxParallel: 1,
+        useDocker: false,
+        buildImage: false,
+        reuseCompleted: false,
+      },
+      ports: buildPortOverrides({ logsRoot: path.join(tmpRoot, "log-sink"), vcs: fakeVcs, paths }),
+      paths,
+    });
+
+    const { runEngine } = await loadRunEngine();
+    const result = await runEngine(context);
+
+    expect(result.state.status).toBe("failed");
+    expect(result.state.tasks["001"]?.status).toBe("validated");
   });
 
-  it("keeps fail_fast policy as task failure on worker failures", () => {
-    const result: WorkerRunnerResult = { success: false, errorMessage: "boom" };
-    const policy: TaskFailurePolicy = "fail_fast";
+  it("rescopes and retries tasks when manifest enforcement blocks", async () => {
+    const { repoPath, tasksRoot, tmpRoot, paths } = await setupRepo("run-engine-compliance-");
 
-    expect(shouldResetTaskToPending({ policy, result })).toBe(false);
+    await writeTaskSpec(
+      tasksRoot,
+      buildTaskManifest("001", "compliance-task", {
+        locks: { reads: [], writes: [] },
+        files: { reads: [], writes: [] },
+      }),
+    );
+
+    getChangesMocks().listChangedFilesMock.mockResolvedValue(["src/blocked.txt"]);
+
+    const config = buildProjectConfig(repoPath, {
+      manifest_enforcement: "block",
+    });
+    const projectName = "compliance-run";
+    const runId = "run-compliance";
+
+    const fakeRunner = new FakeWorkerRunner();
+    fakeRunner.queueRunAttempt("001", { success: true });
+    fakeRunner.queueRunAttempt("001", { success: true });
+    useFakeRunner(fakeRunner);
+
+    const fakeVcs = new FakeVcs();
+    const context = await buildTestContext({
+      projectName,
+      config,
+      options: {
+        runId,
+        maxParallel: 1,
+        useDocker: false,
+        buildImage: false,
+        reuseCompleted: false,
+      },
+      ports: buildPortOverrides({ logsRoot: path.join(tmpRoot, "log-sink"), vcs: fakeVcs, paths }),
+      paths,
+    });
+
+    const { runEngine } = await loadRunEngine();
+    const result = await runEngine(context);
+
+    expect(result.state.status).toBe("complete");
+    expect(result.state.tasks["001"]?.attempts).toBe(2);
+
+    const summaryPath = runSummaryReportPath(repoPath, runId);
+    const summaryRaw = await fs.readFile(summaryPath, "utf8");
+    const summary = JSON.parse(summaryRaw) as {
+      metrics?: { scope_violations?: { block_count?: number } };
+    };
+    expect(summary.metrics?.scope_violations?.block_count).toBe(1);
   });
 });

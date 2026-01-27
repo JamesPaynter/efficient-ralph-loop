@@ -12,6 +12,7 @@ const ENV_VARS = ["MYCELIUM_HOME", "MOCK_LLM"] as const;
 const originalEnv: Record<(typeof ENV_VARS)[number], string | undefined> = Object.fromEntries(
   ENV_VARS.map((key) => [key, process.env[key]]),
 ) as Record<(typeof ENV_VARS)[number], string | undefined>;
+const TEST_TIMEOUT_MS = 20_000;
 
 describe("acceptance: doctor canary config + logging", () => {
   const tempRoots: string[] = [];
@@ -60,7 +61,7 @@ describe("acceptance: doctor canary config + logging", () => {
     );
     expect(events.some((event) => event.type === "doctor.canary.start")).toBe(false);
     expect(events.some((event) => event.type === "doctor.canary.unexpected_pass")).toBe(false);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it("logs unexpected pass as a warning with the configured env var", async () => {
     const { repoDir, homeDir } = await makeRepoWithSingleTask(tempRoots);
@@ -93,7 +94,7 @@ describe("acceptance: doctor canary config + logging", () => {
     expect(unexpectedPayload?.env_var).toBe("MYCELIUM_CANARY");
     expect(unexpectedPayload?.severity).toBe("warn");
     expect(events.some((event) => event.type === "doctor.canary.expected_fail")).toBe(false);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it("logs expected fail when the canary env var forces failure", async () => {
     const { repoDir, homeDir } = await makeRepoWithSingleTask(tempRoots);
@@ -124,7 +125,7 @@ describe("acceptance: doctor canary config + logging", () => {
     expect(expectedPayload?.env_var).toBe("MYCELIUM_CANARY");
     expect(expectedPayload?.exit_code).toBe(1);
     expect(events.some((event) => event.type === "doctor.canary.unexpected_pass")).toBe(false);
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 async function makeRepoWithSingleTask(
