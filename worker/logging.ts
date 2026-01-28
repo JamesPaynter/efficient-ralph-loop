@@ -33,6 +33,15 @@ export type WorkerLogger = {
   log: (event: WorkerLogEventInput) => void;
 };
 
+export type WorkerErrorFormatOptions = {
+  includeStack?: boolean;
+};
+
+export type WorkerErrorPayload = JsonObject & {
+  error: string;
+  stack?: string;
+};
+
 // =============================================================================
 // LOGGING
 // =============================================================================
@@ -108,6 +117,69 @@ export function writeRunLog(runLogsDir: string, fileName: string, content: strin
 
 export function safeAttemptName(attempt: number): string {
   return String(attempt).padStart(3, "0");
+}
+
+export function formatWorkerFatalError(
+  err: unknown,
+  options: WorkerErrorFormatOptions = {},
+): WorkerErrorPayload {
+  const payload: WorkerErrorPayload = {
+    error: formatErrorSummary(err),
+  };
+
+  if (options.includeStack) {
+    const stack = formatErrorStack(err);
+    if (stack) {
+      payload.stack = stack;
+    }
+  }
+
+  return payload;
+}
+
+function formatErrorSummary(err: unknown): string {
+  if (err instanceof Error) {
+    const message = err.message?.trim();
+    if (message) {
+      return message;
+    }
+    const name = err.name?.trim();
+    if (name) {
+      return name;
+    }
+  }
+
+  return safeStringify(err);
+}
+
+function formatErrorStack(err: unknown): string | undefined {
+  if (err instanceof Error && err.stack) {
+    return err.stack;
+  }
+
+  const rendered = safeStringify(err);
+  if (!rendered) {
+    return undefined;
+  }
+
+  return rendered;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    if (json !== undefined) {
+      return json;
+    }
+  } catch {
+    // Fall back to String when JSON serialization fails.
+  }
+
+  return String(value);
 }
 
 export function toErrorMessage(err: unknown): string {
