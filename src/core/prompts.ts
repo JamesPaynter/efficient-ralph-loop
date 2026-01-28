@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import fse from "fs-extra";
 import Handlebars from "handlebars";
 
+import { UserFacingError, USER_FACING_ERROR_CODES } from "./errors.js";
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -27,10 +29,19 @@ export async function renderPromptTemplate(
   values: PromptTemplateValues,
 ): Promise<string> {
   const template = await loadTemplate(name);
-  const output = template(values).trim();
+  let output: string;
+
+  try {
+    output = template(values).trim();
+  } catch (err) {
+    if (err instanceof UserFacingError) {
+      throw err;
+    }
+    throw createPromptTemplateRenderError(name, err);
+  }
 
   if (/\{\{[^}]+\}\}/.test(output)) {
-    throw new Error(`Unresolved placeholder(s) remain in ${name} prompt output`);
+    throw createPromptTemplatePlaceholderError(name);
   }
 
   return output;
@@ -41,14 +52,106 @@ export async function renderPromptTemplate(
 // =============================================================================
 
 const TEMPLATE_CACHE = new Map<PromptTemplateName, Handlebars.TemplateDelegate>();
+const PROMPT_ERROR_CODE = USER_FACING_ERROR_CODES.task;
+const PROMPT_READ_HINT = "Check that the prompt template file is readable.";
+const PROMPT_RENDER_HINT = "Provide values for all required template placeholders.";
+const PROMPT_ROOT_HINT = "Ensure the repository root and templates directory are available.";
+const PROMPT_TEMPLATE_HINT = "Ensure the template exists under templates/prompts.";
+const PROMPT_TEMPLATE_SYNTAX_HINT = "Check the template syntax for errors.";
+
+function createPromptTemplateNotFoundError(
+  name: PromptTemplateName,
+  templatePath: string,
+): UserFacingError {
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt template missing.",
+    message: `Prompt template "${name}" not found at ${templatePath}.`,
+    hint: PROMPT_TEMPLATE_HINT,
+  });
+}
+
+function createPromptTemplateReadError(
+  name: PromptTemplateName,
+  templatePath: string,
+  cause: unknown,
+): UserFacingError {
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt template unreadable.",
+    message: `Failed to read prompt template "${name}" at ${templatePath}.`,
+    hint: PROMPT_READ_HINT,
+    cause,
+  });
+}
+
+function createPromptTemplateCompileError(
+  name: PromptTemplateName,
+  templatePath: string,
+  cause: unknown,
+): UserFacingError {
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt template invalid.",
+    message: `Prompt template "${name}" failed to compile.`,
+    hint: PROMPT_TEMPLATE_SYNTAX_HINT,
+    cause,
+  });
+}
+
+function createPromptTemplateRenderError(
+  name: PromptTemplateName,
+  cause: unknown,
+): UserFacingError {
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt template failed to render.",
+    message: `Prompt template "${name}" could not be rendered.`,
+    hint: PROMPT_RENDER_HINT,
+    cause,
+  });
+}
+
+function createPromptTemplatePlaceholderError(name: PromptTemplateName): UserFacingError {
+  const cause = new Error(`Unresolved placeholder(s) remain in ${name} prompt output`);
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt template placeholders unresolved.",
+    message: `Prompt template "${name}" still has unresolved placeholders.`,
+    hint: PROMPT_RENDER_HINT,
+    cause,
+  });
+}
+
+function createPromptRootError(startDir: string): UserFacingError {
+  return new UserFacingError({
+    code: PROMPT_ERROR_CODE,
+    title: "Prompt templates unavailable.",
+    message: `package.json not found while resolving prompts directory from ${startDir}.`,
+    hint: PROMPT_ROOT_HINT,
+  });
+}
 
 async function loadTemplate(name: PromptTemplateName): Promise<Handlebars.TemplateDelegate> {
   const cached = TEMPLATE_CACHE.get(name);
   if (cached) return cached;
 
   const templatePath = await resolveTemplatePath(name);
-  const raw = await fse.readFile(templatePath, "utf8");
-  const compiled = Handlebars.compile(raw, { noEscape: true, strict: true });
+  let raw: string;
+
+  try {
+    raw = await fse.readFile(templatePath, "utf8");
+  } catch (err) {
+    throw createPromptTemplateReadError(name, templatePath, err);
+  }
+
+  let compiled: Handlebars.TemplateDelegate;
+
+  try {
+    compiled = Handlebars.compile(raw, { noEscape: true, strict: true });
+  } catch (err) {
+    throw createPromptTemplateCompileError(name, templatePath, err);
+  }
 
   TEMPLATE_CACHE.set(name, compiled);
   return compiled;
@@ -59,7 +162,7 @@ async function resolveTemplatePath(name: PromptTemplateName): Promise<string> {
   const templatePath = path.join(promptsDir, `${name}.md`);
   const exists = await fse.pathExists(templatePath);
   if (!exists) {
-    throw new Error(`Prompt template not found: ${templatePath}`);
+    throw createPromptTemplateNotFoundError(name, templatePath);
   }
   return templatePath;
 }
@@ -83,5 +186,5 @@ function findPackageRoot(startDir: string): string {
     current = parent;
   }
 
-  throw new Error("package.json not found while resolving prompts directory");
+  throw createPromptRootError(startDir);
 }
