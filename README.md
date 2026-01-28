@@ -11,14 +11,30 @@ LLM-driven planner and Docker-isolated Codex workers that plan tasks, run them i
 - Logs/state live under `.mycelium` by default (set by the CLI); `logs` can stream raw JSONL or query a SQLite index for timelines/failure digests.
 
 ## Docs
+- Architecture overview: `docs/architecture/overview.md`.
+- Architecture decisions (ADRs): `docs/architecture/adr/`.
 - Spec traceability matrix: `docs/spec-traceability.md` maps each spec principle to code, tests, and drills.
 - Control graph navigation tools: `docs/control-plane/repo-navigation-tools.md`.
 
+## Repo layout
+- `src/app`: application use-cases and orchestrator wiring.
+- `src/core`: shared logic and state.
+- `src/cli`: CLI adapter and commands.
+- `src/ui`: HTTP/UI adapter and static assets.
+- `src/validators`: validator adapters (test/style/doctor/architecture).
+- `src/control-plane`: control graph + policy tooling.
+- `src/docker`: Docker worker adapter.
+- `src/git`: VCS adapter.
+- `src/llm`: LLM client adapters.
+- `worker/`: task execution loop.
+
 ## Architecture boundaries
 - `src/core` is framework-agnostic logic; it must not import from `src/cli` or `src/ui`.
+- `src/app` hosts use-cases; it can import `src/core` and outbound adapters (`src/validators`, `src/docker`, `src/git`, `src/llm`, `src/control-plane`).
 - `src/ui` renders surfaces; it must not import from `src/cli`.
 - `src/cli` is the adapter layer; it can import from `src/core` and should stay thin.
-- Boundaries are enforced via ESLint restricted import rules.
+- Boundaries are enforced via ESLint restricted import rules (`import/no-restricted-paths`).
+- Temporary exception: `src/core/executor.ts` imports the orchestrator while the legacy run engine is strangled.
 
 ## Run an autopilot pass
 1) Install deps: `npm install` (Node 20+).  
@@ -45,6 +61,7 @@ npm run dev -- autopilot --project <project-name> --local-worker --max-parallel 
 
 ## CI quality gates
 - CI runs `npm run typecheck`, `npm run lint`, and `npm run format:check` before build/tests.
+- Repo doctor: `./.mycelium/doctor.sh` (used by orchestrator runs).
 - Run locally with: `npm run typecheck && npm run lint && npm run format:check`.
 
 ## CLI essentials
