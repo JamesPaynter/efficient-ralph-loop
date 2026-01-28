@@ -17,6 +17,7 @@ import {
   type AutopilotIo,
   type AutopilotArtifacts,
 } from "./autopilot.js";
+import { UserFacingError } from "./errors.js";
 
 class StubLlmClient implements LlmClient {
   constructor(private readonly responses: Array<LlmCompletionResult<any>>) {}
@@ -169,5 +170,90 @@ describe("writePlanningArtifacts + transcript formatting", () => {
     expect(transcript).toContain("planning/002-implementation/implementation-plan.md");
     expect(transcript).toContain("tasks=3");
     expect(transcript).toContain("Run skipped by operator.");
+  });
+});
+
+describe("autopilot error normalization", () => {
+  it("wraps missing artifact responses with UserFacingError", async () => {
+    const io = new StubIo();
+    const responses: Array<LlmCompletionResult<any>> = [
+      {
+        text: "",
+        parsed: { action: "synthesize", prompt: "Ready to plan." },
+        finishReason: "stop",
+      },
+      {
+        text: "",
+        parsed: { readySummary: "done" },
+        finishReason: "stop",
+      },
+    ];
+    const client = new StubLlmClient(responses);
+
+    let error: UserFacingError | null = null;
+
+    try {
+      await runAutopilotSession({
+        client,
+        projectName: "demo",
+        repoPath: "/repo",
+        sessionId: "session-1",
+        io,
+        maxQuestions: 1,
+      });
+    } catch (err) {
+      error = err as UserFacingError;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect(error?.title).toBe("Autopilot artifacts missing.");
+    expect(error?.message).toBe("Autopilot did not return planning artifacts.");
+    expect(error?.cause).toBeInstanceOf(Error);
+    expect((error?.cause as Error)?.message).toBe("Autopilot did not return planning artifacts.");
+  });
+
+  it("wraps artifact write failures with a plan input hint", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "autopilot-"));
+    tmpDirs.push(repo);
+
+    const artifacts: AutopilotArtifacts = {
+      discovery: {
+        requirements: "reqs",
+        researchNotes: "notes",
+        apiFindings: "apis",
+      },
+      architecture: {
+        architecture: "arch",
+        decisions: "decisions",
+        infrastructure: "infra",
+      },
+      implementation: {
+        plan: "plan-body",
+        risks: "risks-body",
+      },
+      summary: "overall summary",
+    };
+
+    const planInputDir = path.join(repo, "docs", "planning", "002-implementation");
+    fs.mkdirSync(planInputDir, { recursive: true });
+
+    let error: UserFacingError | null = null;
+
+    try {
+      await writePlanningArtifacts({
+        repoPath: repo,
+        sessionId: "20250101-000000",
+        planInputPath: planInputDir,
+        artifacts,
+      });
+    } catch (err) {
+      error = err as UserFacingError;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect(error?.title).toBe("Autopilot artifacts write failed.");
+    expect(error?.message).toBe("Failed to write planning artifacts.");
+    expect(error?.hint).toContain("plan input path");
+    expect(error?.cause).toBeInstanceOf(Error);
   });
 });
