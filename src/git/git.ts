@@ -1,6 +1,6 @@
 import { execa, type Options } from "execa";
 
-import { GitError } from "../core/errors.js";
+import { GitError, UserFacingError, USER_FACING_ERROR_CODES } from "../core/errors.js";
 
 export async function git(
   cwd: string,
@@ -34,9 +34,19 @@ export async function ensureCleanWorkingTree(cwd: string): Promise<void> {
     stdio: "pipe",
   });
   if (res.stdout.trim().length > 0) {
-    throw new GitError(
+    const title = "Git working tree has uncommitted changes.";
+    const cause = new GitError(
       `Repository has uncommitted changes (cwd=${cwd}). Please commit/stash before running.`,
+      { stdout: res.stdout, stderr: res.stderr },
     );
+
+    throw new UserFacingError({
+      code: USER_FACING_ERROR_CODES.git,
+      title,
+      message: title,
+      hint: "Commit or stash your changes, then rerun the command.",
+      cause,
+    });
   }
 }
 
