@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createAppContext, type AppContext } from "../app/context.js";
 import { ProjectConfigSchema } from "../core/config.js";
+import { UserFacingError } from "../core/errors.js";
 import type { RunHistoryEntry } from "../core/run-history.js";
 import type { RunStatusSummary } from "../core/state-store.js";
 import { createRunState } from "../core/state.js";
@@ -189,7 +190,9 @@ describe("UI server", () => {
     try {
       handle = await startUiServer(options);
     } catch (err) {
-      expect(String(err)).toContain("App context");
+      expect(err).toBeInstanceOf(UserFacingError);
+      const error = err as UserFacingError;
+      expect(error.message).toContain("App context");
       return;
     } finally {
       if (handle) {
