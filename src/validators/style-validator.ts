@@ -21,6 +21,7 @@ import {
   formatError,
   formatFilesForPrompt,
   normalizeCompletion,
+  normalizeValidatorError,
   secondsToMs,
 } from "./lib/normalize.js";
 import type { FileSample } from "./lib/types.js";
@@ -204,18 +205,14 @@ export async function runStyleValidator(
 
     return result;
   } catch (err) {
-    const message = formatError(err);
+    const normalizedError = normalizeValidatorError(err, "Style");
+    const message = formatError(normalizedError);
     validatorLog.log({
       type: "validation.error",
       taskId: args.task.manifest.id,
       payload: { validator: VALIDATOR_ID, message },
     });
-    logOrchestratorEvent(args.orchestratorLog, "validator.error", {
-      validator: VALIDATOR_ID,
-      taskId: args.task.manifest.id,
-      message,
-    });
-    return null;
+    throw normalizedError;
   } finally {
     if (shouldCloseLog) {
       validatorLog.close();

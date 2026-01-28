@@ -19,7 +19,12 @@ import {
   type DoctorValidatorTrigger,
 } from "./doctor-validator-helpers.js";
 import { createValidatorClient } from "./lib/client.js";
-import { formatError, normalizeCompletion, secondsToMs } from "./lib/normalize.js";
+import {
+  formatError,
+  normalizeCompletion,
+  normalizeValidatorError,
+  secondsToMs,
+} from "./lib/normalize.js";
 
 export type {
   DoctorCanaryResult,
@@ -153,7 +158,8 @@ export async function runDoctorValidator(
 
     return result;
   } catch (err) {
-    const message = formatError(err);
+    const normalizedError = normalizeValidatorError(err, "Doctor");
+    const message = formatError(normalizedError);
     validatorLog.log({
       type: "validation.error",
       payload: { validator: VALIDATOR_ID, trigger: args.trigger, message },
@@ -163,7 +169,7 @@ export async function runDoctorValidator(
       trigger: args.trigger,
       message,
     });
-    return null;
+    throw normalizedError;
   } finally {
     if (shouldCloseLog) {
       validatorLog.close();
