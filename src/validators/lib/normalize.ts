@@ -6,9 +6,60 @@ import path from "node:path";
 
 import type { output, ZodTypeAny } from "zod";
 
+import { UserFacingError, USER_FACING_ERROR_CODES } from "../../core/errors.js";
 import { LlmError, type LlmCompletionResult } from "../../llm/client.js";
 
 import type { FileSample, TruncateResult } from "./types.js";
+
+// =============================================================================
+// ERROR NORMALIZATION
+// =============================================================================
+
+const VALIDATOR_ERROR_HINT = "Check the validator config or run with --debug.";
+
+function withValidatorHint(message: string): string {
+  return `${message} ${VALIDATOR_ERROR_HINT}`;
+}
+
+function createValidatorSchemaError(validatorLabel: string, cause: Error): UserFacingError {
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: `${validatorLabel} validator output invalid.`,
+    message: withValidatorHint(
+      `${validatorLabel} validator output did not match the expected schema.`,
+    ),
+    hint: VALIDATOR_ERROR_HINT,
+    cause,
+  });
+}
+
+function createValidatorJsonError(validatorLabel: string, cause: unknown): UserFacingError {
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: `${validatorLabel} validator output invalid.`,
+    message: withValidatorHint(`${validatorLabel} validator returned invalid JSON.`),
+    hint: VALIDATOR_ERROR_HINT,
+    cause,
+  });
+}
+
+function createValidatorFailureError(validatorLabel: string, cause: unknown): UserFacingError {
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: `${validatorLabel} validator failed.`,
+    message: withValidatorHint(`${validatorLabel} validator failed.`),
+    hint: VALIDATOR_ERROR_HINT,
+    cause,
+  });
+}
+
+export function normalizeValidatorError(error: unknown, validatorLabel: string): UserFacingError {
+  if (error instanceof UserFacingError) {
+    return error;
+  }
+
+  return createValidatorFailureError(validatorLabel, error);
+}
 
 // =============================================================================
 // COMPLETION NORMALIZATION
@@ -19,21 +70,21 @@ export function normalizeCompletion<TSchema extends ZodTypeAny>(
   schema: TSchema,
   validatorLabel: string,
 ): output<TSchema> {
-  const raw = completion.parsed ?? parseJson(completion.text);
+  const raw = completion.parsed ?? parseJson(completion.text, validatorLabel);
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    const detail = parsed.error.errors
-      .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
-      .join("; ");
-    throw new LlmError(`${validatorLabel} validator output failed schema validation: ${detail}`);
+    throw createValidatorSchemaError(validatorLabel, parsed.error);
   }
   return parsed.data;
 }
 
-export function parseJson(raw: string): unknown {
+export function parseJson(raw: string, validatorLabel?: string): unknown {
   try {
     return JSON.parse(raw);
   } catch (err) {
+    if (validatorLabel) {
+      throw createValidatorJsonError(validatorLabel, err);
+    }
     throw new LlmError("Validator returned invalid JSON.", err);
   }
 }

@@ -4,6 +4,7 @@ import fse from "fs-extra";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { UserFacingError } from "../../core/errors.js";
 import type { LlmCompletionResult } from "../../llm/client.js";
 
 import { normalizeCompletion } from "./normalize.js";
@@ -47,5 +48,49 @@ describe("normalizeCompletion", () => {
 
     const result = normalizeCompletion(completion, StyleValidationSchema, "Style");
     expect(result).toEqual(expected);
+  });
+
+  it("throws a user-facing error for invalid JSON", () => {
+    const completion: LlmCompletionResult<StyleValidationReport> = {
+      text: "{not-json",
+      finishReason: "stop",
+    };
+
+    let error: unknown = null;
+    try {
+      normalizeCompletion(completion, StyleValidationSchema, "Style");
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    const userError = error as UserFacingError;
+    expect(userError.message).toBe(
+      "Style validator returned invalid JSON. Check the validator config or run with --debug.",
+    );
+    expect(userError.hint).toBe("Check the validator config or run with --debug.");
+    expect(userError.cause).toBeInstanceOf(Error);
+  });
+
+  it("throws a user-facing error for schema mismatches", () => {
+    const completion: LlmCompletionResult<StyleValidationReport> = {
+      text: JSON.stringify({ pass: true }),
+      finishReason: "stop",
+    };
+
+    let error: unknown = null;
+    try {
+      normalizeCompletion(completion, StyleValidationSchema, "Style");
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    const userError = error as UserFacingError;
+    expect(userError.message).toBe(
+      "Style validator output did not match the expected schema. Check the validator config or run with --debug.",
+    );
+    expect(userError.hint).toBe("Check the validator config or run with --debug.");
+    expect(userError.cause).toBeInstanceOf(Error);
   });
 });
