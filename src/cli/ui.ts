@@ -9,6 +9,7 @@ import { execa } from "execa";
 import type { AppContext } from "../app/context.js";
 import { createAppPathsContext } from "../app/paths.js";
 import type { ProjectConfig, UiConfig } from "../core/config.js";
+import { UserFacingError, USER_FACING_ERROR_CODES } from "../core/errors.js";
 import { loadRunStateForProject } from "../core/state-store.js";
 import { startUiServer, type UiServerHandle } from "../ui/server.js";
 
@@ -64,25 +65,15 @@ export async function uiCommand(
     openBrowser: opts.openBrowser,
   });
 
-  let uiStart: UiStartResult;
-  try {
-    const started = await launchUiServer({
-      projectName,
-      runId: resolved.runId,
-      runtime,
-      onError: "throw",
-      appContext,
-    });
-
-    if (!started) {
-      console.error("UI server did not start.");
-      process.exitCode = 1;
-      return;
-    }
-
-    uiStart = started;
-  } catch (err) {
-    console.error(formatUiStartError(err, runtime.port));
+  const uiStart = await launchUiServer({
+    projectName,
+    runId: resolved.runId,
+    runtime,
+    onError: "throw",
+    appContext,
+  });
+  if (!uiStart) {
+    console.error("UI server did not start.");
     process.exitCode = 1;
     return;
   }
@@ -133,14 +124,9 @@ export async function launchUiServer(args: {
   try {
     const appContext = args.appContext;
     if (!appContext) {
-      const err = new Error(
+      throw createUiStartConfigError(
         "App context is required to start the UI server. Create one via createAppContext() or loadAppContext().",
       );
-      if (args.onError === "warn") {
-        console.warn(formatUiStartWarning(err, args.runtime.port));
-        return null;
-      }
-      throw err;
     }
 
     const handle = await startUiServer({
@@ -155,11 +141,14 @@ export async function launchUiServer(args: {
       url: buildUiUrl(handle.url, args.projectName, args.runId),
     };
   } catch (err) {
+    const hintContext =
+      args.onError === "warn" ? UI_START_HINT_CONTEXT_OPTIONAL : UI_START_HINT_CONTEXT_COMMAND;
+    const normalized = normalizeUiStartFailure(err, args.runtime.port, hintContext);
     if (args.onError === "warn") {
-      console.warn(formatUiStartWarning(err, args.runtime.port));
+      console.warn(formatUiStartWarning(normalized));
       return null;
     }
-    throw err;
+    throw normalized;
   }
 }
 
@@ -198,6 +187,116 @@ export async function closeUiServer(handle: UiServerHandle | null): Promise<void
 // =============================================================================
 // INTERNALS
 // =============================================================================
+
+// =============================================================================
+// UI START ERROR NORMALIZATION
+// =============================================================================
+
+type UiStartHintContext = {
+  portFlag: string;
+  allowDisable: boolean;
+};
+
+const UI_START_TITLE = "UI server failed to start.";
+const UI_START_HINT_CONTEXT_OPTIONAL: UiStartHintContext = {
+  portFlag: "--ui-port",
+  allowDisable: true,
+};
+const UI_START_HINT_CONTEXT_COMMAND: UiStartHintContext = {
+  portFlag: "--port",
+  allowDisable: false,
+};
+
+function createUiStartConfigError(message: string): UserFacingError {
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.config,
+    title: UI_START_TITLE,
+    message,
+  });
+}
+
+function normalizeUiStartFailure(
+  error: unknown,
+  port: number,
+  hintContext: UiStartHintContext,
+): UserFacingError {
+  const normalized =
+    error instanceof UserFacingError
+      ? error
+      : new UserFacingError({
+          code: USER_FACING_ERROR_CODES.unknown,
+          title: UI_START_TITLE,
+          message: buildUiStartMessage(port),
+          cause: error,
+        });
+
+  if (normalized.hint) {
+    return normalized;
+  }
+
+  const hint = buildUiStartHint(normalized, hintContext);
+  if (!hint) {
+    return normalized;
+  }
+
+  return new UserFacingError({
+    code: normalized.code,
+    title: normalized.title,
+    message: normalized.message,
+    hint,
+    next: normalized.next,
+    cause: normalized.cause,
+  });
+}
+
+function buildUiStartMessage(port: number): string {
+  if (!Number.isFinite(port) || port === 0) {
+    return "Unable to start the UI server.";
+  }
+
+  return `Unable to start the UI server on port ${port}.`;
+}
+
+function buildUiStartHint(error: UserFacingError, hintContext: UiStartHintContext): string | null {
+  const code = resolveUiStartErrorCode(error);
+  if (code === "EADDRINUSE") {
+    return buildPortConflictHint(hintContext);
+  }
+  if (code === "EACCES") {
+    return buildPortPermissionHint(hintContext);
+  }
+
+  if (hintContext.allowDisable) {
+    return "Disable the UI with --no-ui to continue without it.";
+  }
+
+  return null;
+}
+
+function buildPortConflictHint(hintContext: UiStartHintContext): string {
+  const suffix = hintContext.allowDisable ? " or disable the UI with --no-ui." : ".";
+  return `Port is already in use. Choose another with ${hintContext.portFlag}${suffix}`;
+}
+
+function buildPortPermissionHint(hintContext: UiStartHintContext): string {
+  const suffix = hintContext.allowDisable ? " or disable the UI with --no-ui." : ".";
+  return `Permission denied binding the port. Choose another with ${hintContext.portFlag}${suffix}`;
+}
+
+function resolveUiStartErrorCode(error: UserFacingError): string | null {
+  return resolveErrorCode(error.cause ?? error);
+}
+
+function resolveErrorCode(error: unknown): string | null {
+  if (error && typeof error === "object") {
+    const code = (error as { code?: string }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+
+  return null;
+}
 
 function buildUiUrl(baseUrl: string, projectName: string, runId: string): string {
   const url = new URL(baseUrl);
@@ -238,16 +337,9 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
   });
 }
 
-function formatUiStartWarning(err: unknown, port: number): string {
-  const detail = describeUiServerError(err);
-  const suffix = detail ? ` ${detail}` : "";
-  return `Warning: UI server failed to start on port ${port}.${suffix} Continuing without UI.`;
-}
-
-function formatUiStartError(err: unknown, port: number): string {
-  const detail = describeUiServerError(err);
-  const suffix = detail ? ` ${detail}` : "";
-  return `Failed to start UI server on port ${port}.${suffix}`;
+function formatUiStartWarning(error: UserFacingError): string {
+  const hint = error.hint ? ` Hint: ${error.hint}` : "";
+  return `Warning: ${error.message}${hint} Continuing without UI.`;
 }
 
 function describeUiServerError(err: unknown): string | null {
