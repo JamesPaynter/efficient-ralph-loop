@@ -1,12 +1,16 @@
 import { Command } from "commander";
 
 import { buildConfig, parseBoolean, type CliOptions } from "./config.js";
-import { createStdoutLogger, toErrorMessage } from "./logging.js";
+import { createStdoutLogger, formatWorkerFatalError } from "./logging.js";
 import { runWorker } from "./loop.js";
 
 // =============================================================================
 // CLI
 // =============================================================================
+
+type WorkerCliOptions = CliOptions & {
+  debug?: boolean;
+};
 
 export async function main(argv: string[]): Promise<void> {
   const program = new Command();
@@ -46,6 +50,7 @@ export async function main(argv: string[]): Promise<void> {
       "Enable periodic checkpoint commits (env: CHECKPOINT_COMMITS, default true)",
       (v) => parseBoolean(v, "CHECKPOINT_COMMITS"),
     )
+    .option("--debug", "Include stack traces in fatal errors (env: WORKER_DEBUG)")
     .option(
       "--run-logs-dir <path>",
       "Directory for doctor/bootstrap logs (env: RUN_LOGS_DIR, default: /run-logs)",
@@ -56,13 +61,26 @@ export async function main(argv: string[]): Promise<void> {
     )
     .option("--codex-model <name>", "Model override for Codex (env: CODEX_MODEL)")
     .option("--workdir <path>", "Working directory for commands (default: current directory)")
-    .action(async (opts: CliOptions) => {
+    .action(async (opts: WorkerCliOptions) => {
+      let debugEnabled = false;
+      try {
+        debugEnabled = resolveWorkerDebugFlag(opts.debug);
+      } catch (err) {
+        const logger = createStdoutLogger();
+        logger.log({ type: "worker.fatal", payload: formatWorkerFatalError(err) });
+        process.exit(1);
+        return;
+      }
+
       let config: ReturnType<typeof buildConfig>;
       try {
         config = buildConfig(opts);
       } catch (err) {
         const logger = createStdoutLogger();
-        logger.log({ type: "worker.fatal", payload: { error: toErrorMessage(err) } });
+        logger.log({
+          type: "worker.fatal",
+          payload: formatWorkerFatalError(err, { includeStack: debugEnabled }),
+        });
         process.exit(1);
         return;
       }
@@ -72,12 +90,50 @@ export async function main(argv: string[]): Promise<void> {
       try {
         await runWorker(config, logger);
       } catch (err) {
-        logger.log({ type: "worker.fatal", payload: { error: toErrorMessage(err) } });
+        logger.log({
+          type: "worker.fatal",
+          payload: formatWorkerFatalError(err, { includeStack: debugEnabled }),
+        });
         process.exit(1);
       }
     });
 
-  await program.parseAsync(argv);
+  try {
+    await program.parseAsync(argv);
+  } catch (err) {
+    const logger = createStdoutLogger();
+    const debugEnabled = resolveWorkerDebugFlagSafe();
+    logger.log({
+      type: "worker.fatal",
+      payload: formatWorkerFatalError(err, { includeStack: debugEnabled }),
+    });
+    process.exit(1);
+  }
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+function resolveWorkerDebugFlag(cliValue: boolean | undefined): boolean {
+  if (cliValue !== undefined) {
+    return cliValue;
+  }
+
+  const raw = process.env.WORKER_DEBUG;
+  if (raw === undefined) {
+    return false;
+  }
+
+  return parseBoolean(raw, "WORKER_DEBUG");
+}
+
+function resolveWorkerDebugFlagSafe(): boolean {
+  try {
+    return resolveWorkerDebugFlag(undefined);
+  } catch {
+    return false;
+  }
 }
 
 // Allow direct execution via `node dist/worker/index.js`
