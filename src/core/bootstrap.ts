@@ -2,7 +2,7 @@ import type Docker from "dockerode";
 
 import type { DockerManager } from "../docker/manager.js";
 
-import { TaskError } from "./errors.js";
+import { TaskError, UserFacingError, USER_FACING_ERROR_CODES } from "./errors.js";
 import type { JsonlLogger } from "./logger.js";
 
 // =============================================================================
@@ -36,6 +36,8 @@ export type BootstrapOptions = {
 
 const DEFAULT_WORKDIR = "/workspace";
 const OUTPUT_PREVIEW_LIMIT = 4000;
+const BOOTSTRAP_FAILURE_TITLE = "Bootstrap failed.";
+const BOOTSTRAP_FAILURE_MESSAGE = "Bootstrap command failed.";
 
 export async function runBootstrap(opts: BootstrapOptions): Promise<BootstrapResult> {
   const commands = opts.commands.filter((cmd) => cmd.trim().length > 0);
@@ -89,7 +91,7 @@ export async function runBootstrap(opts: BootstrapOptions): Promise<BootstrapRes
         type: "bootstrap.failed",
         payload: { cmd, exit_code: result.exitCode },
       });
-      throw new TaskError(`Bootstrap command failed: "${cmd}" exited with ${result.exitCode}`);
+      throw createBootstrapCommandFailureError(cmd, result.exitCode);
     }
   }
 
@@ -104,4 +106,14 @@ export async function runBootstrap(opts: BootstrapOptions): Promise<BootstrapRes
 function truncateOutput(text: string, limit: number): { text: string; truncated: boolean } {
   if (text.length <= limit) return { text, truncated: false };
   return { text: text.slice(0, limit), truncated: true };
+}
+
+function createBootstrapCommandFailureError(command: string, exitCode: number): UserFacingError {
+  const cause = new TaskError(`Bootstrap command failed: "${command}" exited with ${exitCode}.`);
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: BOOTSTRAP_FAILURE_TITLE,
+    message: BOOTSTRAP_FAILURE_MESSAGE,
+    cause,
+  });
 }

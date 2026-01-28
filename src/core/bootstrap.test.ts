@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExecResult } from "../docker/manager.js";
 
 import { runBootstrap } from "./bootstrap.js";
-import { TaskError } from "./errors.js";
+import { TaskError, UserFacingError, USER_FACING_ERROR_CODES } from "./errors.js";
 import { JsonlLogger } from "./logger.js";
 
 const tempFiles: string[] = [];
@@ -77,15 +77,27 @@ describe("runBootstrap", () => {
     ]);
     const logger = new JsonlLogger(logPath, { runId: "run-2", taskId: "task-2" });
 
-    await expect(
-      runBootstrap({
+    let error: unknown;
+    try {
+      await runBootstrap({
         commands: ["true", "exit 17", "echo later"],
         container: {} as any,
         docker,
         logger,
         workdir: "/workspace",
-      }),
-    ).rejects.toBeInstanceOf(TaskError);
+      });
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    const userError = error as UserFacingError;
+    expect(userError.code).toBe(USER_FACING_ERROR_CODES.task);
+    expect(userError.message).toBe("Bootstrap command failed.");
+    expect(userError.cause).toBeInstanceOf(TaskError);
+    const cause = userError.cause as TaskError;
+    expect(cause.message).toContain('"exit 17"');
+    expect(cause.message).toContain("17");
 
     logger.close();
 

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { TaskError, UserFacingError, USER_FACING_ERROR_CODES } from "../src/core/errors.js";
 import { resolveTestPaths } from "../src/core/test-paths.js";
 
 import { createCodexRunner } from "./codex.js";
@@ -89,16 +90,20 @@ export async function runWorker(config: WorkerConfig, logger?: WorkerLogger): Pr
 
   await ensureGitIdentity(config.workingDirectory, log);
 
-  const bootstrapResults =
-    config.bootstrapCmds.length > 0
-      ? await runBootstrap({
-          commands: config.bootstrapCmds,
-          cwd: config.workingDirectory,
-          log,
-          runLogsDir: config.runLogsDir,
-          env: commandEnv,
-        })
-      : [];
+  let bootstrapResults: Awaited<ReturnType<typeof runBootstrap>> = [];
+  if (config.bootstrapCmds.length > 0) {
+    try {
+      bootstrapResults = await runBootstrap({
+        commands: config.bootstrapCmds,
+        cwd: config.workingDirectory,
+        log,
+        runLogsDir: config.runLogsDir,
+        env: commandEnv,
+      });
+    } catch (err) {
+      throw createBootstrapFailureError(err);
+    }
+  }
 
   await fs.mkdir(config.codexHome, { recursive: true });
 
@@ -199,4 +204,54 @@ export async function runWorker(config: WorkerConfig, logger?: WorkerLogger): Pr
     doctorTimeoutSeconds: config.doctorTimeoutSeconds,
     taskId: config.taskId,
   });
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+const BOOTSTRAP_FAILURE_TITLE = "Bootstrap failed.";
+const BOOTSTRAP_FAILURE_MESSAGE = "Bootstrap command failed.";
+
+function createBootstrapFailureError(error: unknown): UserFacingError {
+  if (error instanceof UserFacingError) {
+    return error;
+  }
+
+  const cause = createBootstrapFailureCause(error);
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: BOOTSTRAP_FAILURE_TITLE,
+    message: BOOTSTRAP_FAILURE_MESSAGE,
+    cause,
+  });
+}
+
+function createBootstrapFailureCause(error: unknown): Error | undefined {
+  const parsed = parseBootstrapExitFailure(error);
+  if (parsed) {
+    return new TaskError(
+      `Bootstrap command failed: "${parsed.command}" exited with ${parsed.exitCode}.`,
+    );
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  if (error !== undefined && error !== null) {
+    return new TaskError(String(error));
+  }
+
+  return undefined;
+}
+
+function parseBootstrapExitFailure(error: unknown): { command: string; exitCode: number } | null {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const match = /^Bootstrap command failed: "(.+)" exited with (-?\d+)\.?$/.exec(message);
+  if (!match) {
+    return null;
+  }
+
+  return { command: match[1], exitCode: Number(match[2]) };
 }
