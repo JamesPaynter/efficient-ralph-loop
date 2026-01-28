@@ -1,6 +1,8 @@
 import type { AppContext } from "../app/context.js";
 import { writeAutopilotTranscript } from "../core/autopilot.js";
 import type { ProjectConfig } from "../core/config.js";
+import { formatErrorMessage } from "../core/error-format.js";
+import { UserFacingError, USER_FACING_ERROR_CODES } from "../core/errors.js";
 
 import {
   buildAutopilotRuntime,
@@ -11,6 +13,47 @@ import {
   type AutopilotOptions,
   type AutopilotTranscriptState,
 } from "./autopilot-flow.js";
+
+// =============================================================================
+// ERROR NORMALIZATION
+// =============================================================================
+
+type AutopilotFailureStage = "planning" | "run";
+
+const AUTOPILOT_PLAN_INPUT_HINT =
+  "Check the plan input path (--plan-input) or create the implementation plan file.";
+
+function normalizeAutopilotFailure(error: unknown, stage: AutopilotFailureStage): UserFacingError {
+  if (error instanceof UserFacingError) {
+    if (stage === "planning" && shouldReplacePlanInputHint(error)) {
+      return new UserFacingError({
+        code: error.code,
+        title: error.title,
+        message: error.message,
+        hint: AUTOPILOT_PLAN_INPUT_HINT,
+        next: error.next,
+        cause: error.cause ?? error,
+      });
+    }
+
+    return error;
+  }
+
+  const title = stage === "planning" ? "Autopilot planning failed." : "Autopilot run failed.";
+  const hint = stage === "planning" ? AUTOPILOT_PLAN_INPUT_HINT : undefined;
+
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title,
+    message: title,
+    hint,
+    cause: error,
+  });
+}
+
+function shouldReplacePlanInputHint(error: UserFacingError): boolean {
+  return Boolean(error.hint?.includes("--input"));
+}
 
 // =============================================================================
 // CLI ENTRYPOINT
@@ -58,13 +101,15 @@ export async function autopilotCommand(
       transcriptData,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!transcriptData.plan) {
+    const stage: AutopilotFailureStage = transcriptData.plan ? "run" : "planning";
+    const normalizedError = normalizeAutopilotFailure(err, stage);
+    const message = formatErrorMessage(normalizedError);
+    if (stage === "planning") {
       transcriptData.planError = message;
     } else {
       transcriptData.runError = message;
     }
-    throw err;
+    throw normalizedError;
   } finally {
     runtime.io.close();
     runtime.stopHandler.cleanup();
