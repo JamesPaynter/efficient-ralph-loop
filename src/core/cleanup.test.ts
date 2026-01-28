@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunContainerSummary } from "../docker/manager.js";
 
 import { buildCleanupPlan, executeCleanupPlan } from "./cleanup.js";
+import { UserFacingError, USER_FACING_ERROR_CODES } from "./errors.js";
 import { createPathsContext, runLogsDir, runStatePath, runWorkspaceDir } from "./paths.js";
 import type { PathsContext } from "./paths.js";
 
@@ -111,9 +112,30 @@ describe("cleanup", () => {
     const workspace = runWorkspaceDir(projectName, maliciousRunId, paths);
     await fse.ensureDir(workspace);
 
-    await expect(
-      buildCleanupPlan(projectName, { runId: maliciousRunId, removeContainers: false, paths }),
-    ).rejects.toThrow(/outside/i);
+    let error: unknown;
+    try {
+      await buildCleanupPlan(projectName, {
+        runId: maliciousRunId,
+        removeContainers: false,
+        paths,
+      });
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    const userError = error as UserFacingError;
+    expect(userError.code).toBe(USER_FACING_ERROR_CODES.task);
+    expect(userError.title).toBe("Cleanup refused.");
+    expect(userError.message).toBe(
+      "Cleanup refused because the workspace path is outside the configured roots.",
+    );
+    expect(userError.hint).toContain("cleanup paths");
+    expect(userError.hint).toContain("config");
+    expect(userError.cause).toBeInstanceOf(Error);
+    const cause = userError.cause as Error;
+    expect(cause.message).toContain("Refusing to remove workspace");
+    expect(cause.message).toContain(path.resolve(workspace));
   });
 });
 

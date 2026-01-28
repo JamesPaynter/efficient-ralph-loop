@@ -4,6 +4,7 @@ import fse from "fs-extra";
 
 import { DockerManager, type RunContainerSummary } from "../docker/manager.js";
 
+import { TaskError, UserFacingError, USER_FACING_ERROR_CODES } from "./errors.js";
 import type { PathsContext } from "./paths.js";
 import {
   logsBaseDir,
@@ -98,13 +99,36 @@ function baseDirForTarget(
   return stateBaseDir(projectName, paths);
 }
 
-function assertInsideBase(targetPath: string, baseDir: string, label: string): void {
+const CLEANUP_PATH_HINT =
+  "Verify cleanup paths in your config and rerun with `--debug` to see the rejected path.";
+
+function createCleanupPathError(args: {
+  label: CleanupTarget["kind"];
+  baseDir: string;
+  targetPath: string;
+}): UserFacingError {
+  return new UserFacingError({
+    code: USER_FACING_ERROR_CODES.task,
+    title: "Cleanup refused.",
+    message: `Cleanup refused because the ${args.label} path is outside the configured roots.`,
+    hint: CLEANUP_PATH_HINT,
+    cause: new TaskError(
+      `Refusing to remove ${args.label} outside ${args.baseDir}: ${args.targetPath}`,
+    ),
+  });
+}
+
+function assertInsideBase(targetPath: string, baseDir: string, label: CleanupTarget["kind"]): void {
   const normalizedBase = path.resolve(baseDir);
   const normalizedTarget = path.resolve(targetPath);
   const relative = path.relative(normalizedBase, normalizedTarget);
 
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Refusing to remove ${label} outside ${normalizedBase}: ${normalizedTarget}`);
+    throw createCleanupPathError({
+      label,
+      baseDir: normalizedBase,
+      targetPath: normalizedTarget,
+    });
   }
 }
 
